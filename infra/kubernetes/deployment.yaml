@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: driftguard-api
+  namespace: driftguard
+  labels:
+    app: driftguard-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: driftguard-api
+  template:
+    metadata:
+      labels:
+        app: driftguard-api
+    spec:
+      containers:
+        - name: api
+          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/driftguard-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres-rds.driftguard.local"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "driftguard"
+            - name: POSTGRES_USER
+              value: "driftguard"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: REDIS_HOST
+              value: "redis-elasticache.driftguard.local"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-service.driftguard.svc.cluster.local:5000"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5

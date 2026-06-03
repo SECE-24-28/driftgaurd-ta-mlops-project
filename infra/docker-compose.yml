@@ -1,0 +1,199 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # DATA METADATA STORE
+  # ----------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: driftguard-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: driftguard
+      POSTGRES_PASSWORD: driftguard
+      POSTGRES_DB: driftguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U driftguard -d driftguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------
+  # FEAST ONLINE FEATURE STORE
+  # ----------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: driftguard-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------
+  # EXPERIMENT & MODEL REGISTRY (MLflow)
+  # ----------------------------------------------------
+  mlflow:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - REQUIREMENTS_FILE=requirements/api.txt
+    container_name: driftguard-mlflow
+    restart: always
+    command: mlflow server --backend-store-uri postgresql://driftguard:driftguard@postgres:5432/driftguard --default-artifact-root s3://driftguard-artifacts --host 0.0.0.0 --port 5000
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------
+  # WORKFLOW SCHEDULER (Prefect Server)
+  # ----------------------------------------------------
+  prefect:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - REQUIREMENTS_FILE=requirements/pipeline.txt
+    container_name: driftguard-prefect
+    restart: always
+    command: prefect server start --host 0.0.0.0 --port 4200
+    ports:
+      - "4200:4200"
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://driftguard:driftguard@postgres:5432/driftguard
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4200/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------
+  # METRICS INGESTION (Prometheus)
+  # ----------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: driftguard-prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+  # ----------------------------------------------------
+  # OBSERVABILITY PANELS (Grafana)
+  # ----------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: driftguard-grafana
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+
+  # ----------------------------------------------------
+  # EVIDENTLY STATISTICAL CALCULATION SERVICE
+  # ----------------------------------------------------
+  driftguard-evidently:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - REQUIREMENTS_FILE=requirements/evidently.txt
+    container_name: driftguard-evidently
+    restart: always
+    command: ["uvicorn", "monitoring.evidently_app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8001:8000"
+    environment:
+      - SERVICE_MODE=evidently
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------
+  # DRIFTGUARD CORE API GATEWAY
+  # ----------------------------------------------------
+  driftguard-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - REQUIREMENTS_FILE=requirements/api.txt
+    container_name: driftguard-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: driftguard
+      POSTGRES_USER: driftguard
+      POSTGRES_PASSWORD: driftguard
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      PREFECT_API_URL: http://prefect:4200/api
+      DRIFTGUARD_EVIDENTLY_URL: http://driftguard-evidently:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------
+  # DRIFTGUARD OBSIDIAN FRONTEND DASHBOARD
+  # ----------------------------------------------------
+  driftguard-dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    container_name: driftguard-dashboard
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      DRIFTGUARD_API_URL: http://driftguard-api:8000
+    depends_on:
+      - driftguard-api
+
+volumes:
+  pgdata:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,61 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: driftguard-api
+  namespace: driftguard
+spec:
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: driftguard-api
+  template:
+    metadata:
+      labels:
+        app: driftguard-api
+    spec:
+      containers:
+        - name: api
+          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/driftguard-api:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres-rds.driftguard.local"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "driftguard"
+            - name: POSTGRES_USER
+              value: "driftguard"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+  strategy:
+    canary:
+      stableService: driftguard-api-active
+      canaryService: driftguard-api-canary
+      trafficRouting:
+        nginx:
+          stableIngress: driftguard-api-ingress
+      # SLA threshold rollback triggers: error rate > 5% or latency > 500ms
+      analysis:
+        templates:
+          - templateName: driftguard-sla-check
+        args:
+          - name: service-name
+            value: driftguard-api-canary
+      steps:
+        # Step 1: Start canary at 10% traffic for 30 minutes
+        - setWeight: 10
+        - pause: { duration: 30m }
+        # Step 2: Increase split to 25%
+        - setWeight: 25
+        - pause: { duration: 30m }
+        # Step 3: Increase split to 50%
+        - setWeight: 50
+        - pause: { duration: 30m }
+        # Step 4: Full promotion to 100% stable

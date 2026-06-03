@@ -1,0 +1,9 @@
+bentoml==1.2.0
+ray[serve]==2.10.0
+pydantic==2.7.0
+fastapi==0.111.0
+uvicorn==0.29.0
+python-dotenv==1.0.1
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy==1.26.4

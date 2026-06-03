@@ -1,0 +1,27 @@
+# DriftGuard Root Requirements File
+# NOTE: To run without dependency conflicts, use the isolated container requirements in /requirements directory
+fastapi==0.111.0
+uvicorn==0.29.0
+pydantic==2.7.0
+evidently==0.4.30
+river==0.21.0
+prefect==2.19.0
+zenml==0.57.0
+mlflow==2.13.0
+wandb==0.17.0
+bentoml==1.2.0
+ray[serve]==2.10.0
+feast==0.38.0
+great-expectations==0.18.15
+prometheus-client==0.20.0
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy==1.26.4
+redis==5.0.4
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+reportlab==4.1.0
+python-dotenv==1.0.1
+httpx==0.27.0
+pytest==8.2.0
+pytest-asyncio==0.23.6
