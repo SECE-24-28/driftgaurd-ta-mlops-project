@@ -8,7 +8,25 @@ from typing import Dict, Any, List
 import logging
 
 # River for real-time drift detection
-from river.drift import ADWIN
+try:
+    from river.drift import ADWIN
+except ImportError:
+    class ADWIN:
+        """Lightweight fallback used when river is unavailable."""
+
+        def __init__(self, threshold: float = 6.0, warmup: int = 20):
+            self.threshold = threshold
+            self.warmup = warmup
+            self.count = 0
+            self.mean = 0.0
+            self.drift = False
+
+        def update(self, value: float):
+            value = float(value)
+            if self.count >= self.warmup and abs(value - self.mean) > self.threshold:
+                self.drift = True
+            self.count += 1
+            self.mean += (value - self.mean) / self.count
 
 # Evidently AI for statistical presets (requires evidently dependency group)
 try:
@@ -19,6 +37,14 @@ except ImportError:
     EVIDENTLY_AVAILABLE = False
 
 logger = logging.getLogger("DriftGuard.DriftDetector")
+
+
+def _is_detector_drifting(detector: Any) -> bool:
+    return bool(
+        getattr(detector, "drift", False)
+        or getattr(detector, "drift_detected", False)
+        or getattr(detector, "change_detected", False)
+    )
 
 class ADWINDriftDetector:
     """
@@ -60,19 +86,19 @@ class ADWINDriftDetector:
         drift_detected_count = 0
         for i, val in enumerate(flat_features):
             self.detectors[i].update(val)
-            
-            # Decay old scores
-            self.feature_drift_scores[i] *= self.decay_rate
-            
+
             # If drift is detected by ADWIN, jump feature score to 1.0
-            if self.detectors[i].drift:
+            if _is_detector_drifting(self.detectors[i]):
                 logger.warning(f"ADWIN detected concept drift on feature index {i}!")
                 self.feature_drift_scores[i] = 1.0
                 drift_detected_count += 1
+            else:
+                # Decay old scores only while the feature is stable.
+                self.feature_drift_scores[i] *= self.decay_rate
                 
-        # Global drift score is the maximum of individual feature drift scores
-        # This guarantees a value between 0.0 and 1.0
-        self.global_drift_score = float(max(self.feature_drift_scores))
+        # Global drift score tracks the highest observed feature score so a detected
+        # drift event does not immediately disappear on later stable samples.
+        self.global_drift_score = float(max(self.global_drift_score, max(self.feature_drift_scores)))
         return self.global_drift_score
 
     def get_status(self) -> Dict[str, Any]:

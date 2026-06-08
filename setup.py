@@ -11,19 +11,18 @@ setup(
     packages=find_packages(),
     install_requires=[
         "fastapi==0.111.0",
-        "uvicorn==0.29.0",
-        "pydantic==2.7.0",
+        "uvicorn==0.28.1",
+        "pydantic==1.10.13",
         "river==0.21.0",
-        "mlflow==2.13.0",
-        "wandb==0.17.0",
         "prometheus-client==0.20.0",
         "scikit-learn==1.4.2",
         "pandas==2.2.2",
         "numpy==1.26.4",
         "python-dotenv==1.0.1",
         "httpx==0.27.0",
-        "reportlab==4.1.0",
         "redis==5.0.4",
+        "psycopg2-binary==2.9.9",
+        "sqlalchemy==2.0.30",
     ],
     extras_require={
         "validation": [

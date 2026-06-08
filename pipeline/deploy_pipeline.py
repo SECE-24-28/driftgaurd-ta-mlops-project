@@ -9,7 +9,10 @@ import logging
 from typing import Dict, Any, Tuple
 
 # MLflow Client for registry updates
-import mlflow
+try:
+    import mlflow
+except ImportError:
+    mlflow = None
 from sdk.config import settings
 from sdk.alert import send_alert
 
@@ -40,20 +43,22 @@ def deploy_canary_challenger(
     logger.info(f"Initiating Canary Deployment for '{model_id}' version {new_version}...")
     
     # 1. Register new model in MLflow Registry as Staging
+    client = None
     try:
-        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
-        client = mlflow.tracking.MlflowClient()
-        # Ensure model is registered (in local tests we might mock this)
-        logger.info(f"Registering version {new_version} in MLflow Model Registry...")
-        try:
-            client.transition_model_version_stage(
-                name=model_id,
-                version=new_version,
-                stage="Staging"
-            )
-            logger.info("Successfully transitioned model version to Staging.")
-        except Exception as reg_err:
-            logger.warning(f"Could not update MLflow Registry stage: {reg_err}. Proceeding with local configuration.")
+        if mlflow is not None:
+            mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+            client = mlflow.tracking.MlflowClient()
+            # Ensure model is registered (in local tests we might mock this)
+            logger.info(f"Registering version {new_version} in MLflow Model Registry...")
+            try:
+                client.transition_model_version_stage(
+                    name=model_id,
+                    version=new_version,
+                    stage="Staging"
+                )
+                logger.info("Successfully transitioned model version to Staging.")
+            except Exception as reg_err:
+                logger.warning(f"Could not update MLflow Registry stage: {reg_err}. Proceeding with local configuration.")
     except Exception as e:
         logger.warning(f"MLflow service unreachable: {e}")
 
@@ -92,14 +97,15 @@ def deploy_canary_challenger(
             
     # If all steps succeeded, promote version to Production
     logger.info(f"Canary deployment succeeded! Promoting '{model_id}' version {new_version} to full Production.")
-    try:
-        client.transition_model_version_stage(
-            name=model_id,
-            version=new_version,
-            stage="Production"
-        )
-    except Exception:
-        pass
+    if client is not None:
+        try:
+            client.transition_model_version_stage(
+                name=model_id,
+                version=new_version,
+                stage="Production"
+            )
+        except Exception:
+            pass
         
     return True
 

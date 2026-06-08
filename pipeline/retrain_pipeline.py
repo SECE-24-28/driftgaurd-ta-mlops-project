@@ -11,7 +11,7 @@ import datetime
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 # Prefect for Flow Orchestration
 try:
@@ -46,8 +46,15 @@ except ImportError:
     FeatureStore = None
 
 # MLflow and Weights & Biases
-import mlflow
-import wandb
+try:
+    import mlflow
+except ImportError:
+    mlflow = None
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from sdk.config import settings
 from sdk.alert import send_alert
@@ -124,21 +131,28 @@ def validate_data_with_ge(df: pd.DataFrame) -> bool:
     Step 1: Runs Great Expectations validation checks on ingested features.
     """
     logger.info("Running Great Expectations data validation checks...")
-    if ge is None:
+    if ge is None or not hasattr(ge, "from_pandas"):
         logger.warning("Great Expectations is not installed. Bypassing data validation check.")
-        return True
-        
+        if "feature_0" not in df.columns:
+            return False
+        feature = df["feature_0"]
+        if feature.isna().any():
+            return False
+        if not pd.api.types.is_numeric_dtype(feature):
+            return False
+        return bool(feature.between(0.0, 40.0).all())
+
     ge_df = ge.from_pandas(df)
-    
+
     # 1. Assert no null values in critical features
     null_res = ge_df.expect_column_values_to_not_be_null("feature_0")
-    
+
     # 2. Assert values within expected bounds (e.g. breast cancer mean feature_0 range)
     bounds_res = ge_df.expect_column_values_to_be_between("feature_0", min_value=0.0, max_value=40.0)
-    
+
     # 3. Assert column types match schema (float64)
     type_res = ge_df.expect_column_values_to_be_of_type("feature_0", "float64")
-    
+
     all_passed = bool(null_res.success and bounds_res.success and type_res.success)
     
     if all_passed:
@@ -184,14 +198,15 @@ def retrain_model_with_tracking(
     
     # Enable W&B offline detection handled in config.py
     # Initialize W&B run
-    try:
-        wandb.init(
-            project=os.getenv("WANDB_PROJECT", "driftguard"),
-            name=f"{model_id}-retraining-{datetime.datetime.utcnow().strftime('%Y%m%d-%H%M')}",
-            config={"max_depth": 5, "n_estimators": 100, "algorithm": "RandomForest"}
-        )
-    except Exception as e:
-        logger.warning(f"W&B init warning: {e}")
+    if wandb is not None:
+        try:
+            wandb.init(
+                project=os.getenv("WANDB_PROJECT", "driftguard"),
+                name=f"{model_id}-retraining-{datetime.datetime.utcnow().strftime('%Y%m%d-%H%M')}",
+                config={"max_depth": 5, "n_estimators": 100, "algorithm": "RandomForest"}
+            )
+        except Exception as e:
+            logger.warning(f"W&B init warning: {e}")
 
     # Retrain
     from sklearn.ensemble import RandomForestClassifier
@@ -218,8 +233,9 @@ def retrain_model_with_tracking(
     f1 = f1_score(y_val, val_preds)
     
     # Log everything to MLflow
-    mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(settings.MLFLOW_EXPERIMENT_NAME)
+    if mlflow is not None:
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(settings.MLFLOW_EXPERIMENT_NAME)
     
     params = {"max_depth": 5, "n_estimators": 100, "algorithm": "RandomForest"}
     metrics = {"accuracy": val_acc, "f1": f1}
@@ -227,25 +243,28 @@ def retrain_model_with_tracking(
     new_version_suffix = int(current_version.split('.')[-1]) + 1
     new_version = f"1.0.{new_version_suffix}"
 
-    try:
-        with mlflow.start_run(run_name=f"driftguard-retrain-{model_id}") as run:
-            mlflow.log_params(params)
-            mlflow.log_metrics(metrics)
-            
-            # Log dummy artifact confusion matrix
-            with open("confusion_matrix.txt", "w") as f:
-                f.write("Confusion Matrix:\n[[210, 5], [12, 115]]")
-            mlflow.log_artifact("confusion_matrix.txt")
-            
-            # Register in registry
-            mlflow.sklearn.log_model(
-                sk_model=clf,
-                artifact_path="model",
-                registered_model_name=model_id
-            )
-            logger.info("Successfully pushed model artifact to MLflow Registry.")
-    except Exception as e:
-        logger.warning(f"MLflow logs bypassed: {e}")
+    if mlflow is not None:
+        try:
+            with mlflow.start_run(run_name=f"driftguard-retrain-{model_id}") as run:
+                mlflow.log_params(params)
+                mlflow.log_metrics(metrics)
+                
+                # Log dummy artifact confusion matrix
+                with open("confusion_matrix.txt", "w") as f:
+                    f.write("Confusion Matrix:\n[[210, 5], [12, 115]]")
+                mlflow.log_artifact("confusion_matrix.txt")
+                
+                # Register in registry
+                mlflow.sklearn.log_model(
+                    sk_model=clf,
+                    artifact_path="model",
+                    registered_model_name=model_id
+                )
+                logger.info("Successfully pushed model artifact to MLflow Registry.")
+        except Exception as e:
+            logger.warning(f"MLflow logs bypassed: {e}")
+    else:
+        logger.warning("MLflow is not installed. Skipping experiment tracking.")
 
     # Complete W&B run
     try:

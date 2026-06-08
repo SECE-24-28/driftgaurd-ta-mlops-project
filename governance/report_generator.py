@@ -8,10 +8,14 @@ import json
 import datetime
 from typing import Dict, Any, List
 
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
 from sdk.config import settings
 
@@ -96,6 +100,9 @@ def generate_pdf_report(
             [(datetime.datetime.utcnow() - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M"), "COMPLETED", "0.8912", "0.9123", "1.0.4", "1.0.5"],
             [(datetime.datetime.utcnow() - datetime.timedelta(days=3)).strftime("%Y-%m-%d %H:%M"), "COMPLETED", "0.8752", "0.8912", "1.0.3", "1.0.4"]
         ]
+
+    if not REPORTLAB_AVAILABLE:
+        return _generate_fallback_pdf(model_id, version, output_path, lineage, drift_events, retrain_events)
 
     # Create PDF Doc
     doc = SimpleDocTemplate(output_path, pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
@@ -235,4 +242,76 @@ def generate_pdf_report(
     
     # Compile
     doc.build(story)
+    return output_path
+
+
+def _generate_fallback_pdf(model_id: str, version: str, output_path: str, lineage: Dict[str, Any], drift_events: List[Any], retrain_events: List[Any]) -> str:
+    """Generate a simple standalone PDF when ReportLab is unavailable."""
+
+    def escape_pdf_text(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    lines = [
+        f"DriftGuard Governance & Compliance Audit",
+        f"Model: {model_id}",
+        f"Version: {version}",
+        f"Generated: {datetime.datetime.utcnow().isoformat()}Z",
+        "",
+        "Lineage Summary:",
+        json.dumps(lineage, sort_keys=True),
+        "",
+        "Drift Events:",
+        json.dumps(drift_events, sort_keys=True),
+        "",
+        "Retraining Events:",
+        json.dumps(retrain_events, sort_keys=True),
+        "",
+        "Compliance: ReportLab unavailable, generated fallback PDF.",
+    ]
+
+    content_lines = ["BT", "/F1 10 Tf", "50 760 Td"]
+    for index, line in enumerate(lines):
+        if index > 0:
+            content_lines.append("0 -14 Td")
+        content_lines.append(f"({escape_pdf_text(line)}) Tj")
+    content_lines.append("ET")
+    content_stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+
+    objects = []
+    objects.append(b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")
+    objects.append(b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n")
+    objects.append(
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n"
+    )
+    objects.append(
+        b"4 0 obj << /Length " + str(len(content_stream)).encode("ascii") + b" >> stream\n" + content_stream + b"\nendstream endobj\n"
+    )
+    objects.append(b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n")
+
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(pdf))
+        pdf.extend(obj)
+
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        (
+            "trailer << /Size "
+            + str(len(offsets))
+            + " /Root 1 0 R >>\nstartxref\n"
+            + str(xref_offset)
+            + "\n%%EOF\n"
+        ).encode("ascii")
+    )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "wb") as f:
+        f.write(pdf)
+
     return output_path

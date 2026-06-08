@@ -1,1 +1,198 @@
+# =============================================================
+# DRIFTGUARD MLOPS PROJECT — .gitignore
+# =============================================================
+
+# --------------------------------------------------
+# ENVIRONMENT & SECRETS
+# --------------------------------------------------
 .env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# --------------------------------------------------
+# PYTHON
+# --------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+wheels/
+*.whl
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+.installed.cfg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+Lib/
+Scripts/
+Include/
+pyvenv.cfg
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+nosetests.xml
+test-results/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# --------------------------------------------------
+# NODE / NEXT.JS (dashboard/)
+# --------------------------------------------------
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/.cache/
+dashboard/npm-debug.log*
+dashboard/yarn-debug.log*
+dashboard/yarn-error.log*
+dashboard/.pnp/
+dashboard/.pnp.js
+dashboard/.vercel
+
+# --------------------------------------------------
+# MLFLOW
+# --------------------------------------------------
+mlruns/
+mlartifacts/
+mlflow.db
+
+# --------------------------------------------------
+# WANDB
+# --------------------------------------------------
+wandb/
+wandb_local/
+.wandb/
+
+# --------------------------------------------------
+# FEAST / FEATURE STORE
+# --------------------------------------------------
+feature_repo/data/
+online_store.db
+registry.db
+
+# --------------------------------------------------
+# DATABASES & PERSISTENT DATA
+# --------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+driftguard_metadata.db
+pgdata/
+
+# --------------------------------------------------
+# DOCKER VOLUMES & COMPOSE OVERRIDES
+# --------------------------------------------------
+docker-compose.override.yml
+infra/grafana/provisioning/dashboards/*.json.bak
+prometheus-data/
+grafana-data/
+
+# --------------------------------------------------
+# REPORTS & GENERATED ARTIFACTS
+# --------------------------------------------------
+reports/
+confusion_matrix.txt
+*.html
+*.pdf
+*.png
+*.jpg
+*.jpeg
+!dashboard/public/**
+
+# --------------------------------------------------
+# LOGS
+# --------------------------------------------------
+logs/
+*.log
+*.log.*
+
+# --------------------------------------------------
+# DATA FILES (large / sensitive)
+# --------------------------------------------------
+data/
+datasets/
+*.csv
+*.parquet
+*.feather
+*.arrow
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# --------------------------------------------------
+# MODEL ARTIFACTS
+# --------------------------------------------------
+models/
+*.pt
+*.pth
+*.onnx
+*.pb
+*.tflite
+*.bin
+*.safetensors
+
+# --------------------------------------------------
+# TERRAFORM
+# --------------------------------------------------
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+infra/terraform/.terraform.lock.hcl
+infra/terraform/crash.log
+
+# --------------------------------------------------
+# IDEs & EDITORS
+# --------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --------------------------------------------------
+# OS GENERATED
+# --------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

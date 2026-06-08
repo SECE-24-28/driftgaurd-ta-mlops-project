@@ -15,7 +15,21 @@ from sdk.config import settings
 # Thread-safety lock
 _log_lock = threading.Lock()
 
-AUDIT_LOG_FILE = os.path.join(settings.GOVERNANCE_REPORT_OUTPUT_DIR, "audit_trail.jsonl")
+class _AuditLogFilePath:
+    def __fspath__(self):
+        return os.path.join(settings.GOVERNANCE_REPORT_OUTPUT_DIR, "audit_trail.jsonl")
+
+    def __str__(self):
+        return self.__fspath__()
+
+
+AUDIT_LOG_FILE = _AuditLogFilePath()
+
+
+def _resolve_audit_log_file() -> str:
+    if isinstance(AUDIT_LOG_FILE, str):
+        return AUDIT_LOG_FILE
+    return os.fspath(AUDIT_LOG_FILE)
 
 def write_audit_entry(
     model_id: str,
@@ -44,9 +58,10 @@ def write_audit_entry(
     with _log_lock:
         # 1. Fetch the preceding entry hash to chain the logs
         prev_hash = "0" * 64
-        if os.path.exists(AUDIT_LOG_FILE):
+        audit_log_file = _resolve_audit_log_file()
+        if os.path.exists(audit_log_file):
             try:
-                with open(AUDIT_LOG_FILE, "r") as f:
+                with open(audit_log_file, "r") as f:
                     lines = f.readlines()
                     if lines:
                         last_line = json.loads(lines[-1].strip())
@@ -74,7 +89,7 @@ def write_audit_entry(
 
         # 4. Append to ledger file
         try:
-            with open(AUDIT_LOG_FILE, "a") as f:
+            with open(audit_log_file, "a") as f:
                 f.write(json.dumps(entry) + "\n")
         except IOError as e:
             # Fallback output
@@ -108,12 +123,14 @@ def verify_audit_integrity() -> bool:
     Returns:
         True if the audit trail is pristine, False if any records were modified or deleted.
     """
-    if not os.path.exists(AUDIT_LOG_FILE):
+    audit_log_file = _resolve_audit_log_file()
+
+    if not os.path.exists(audit_log_file):
         return True
 
     with _log_lock:
         try:
-            with open(AUDIT_LOG_FILE, "r") as f:
+            with open(audit_log_file, "r") as f:
                 lines = f.readlines()
                 
             expected_prev_hash = "0" * 64

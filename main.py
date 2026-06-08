@@ -6,6 +6,7 @@ import os
 import json
 import time
 import datetime
+import numpy as np
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 

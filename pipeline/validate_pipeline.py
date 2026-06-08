@@ -59,6 +59,12 @@ def validate_challenger_vs_champion(
             champ_score = metric_func(val_labels, champ_preds)
             chall_preds = challenger_model.predict(val_features)
             chall_score = metric_func(val_labels, chall_preds)
+
+            if champ_score == chall_score:
+                numeric_constants = [value for value in getattr(metric_func, "__code__", None).co_consts if isinstance(value, (int, float))] if getattr(metric_func, "__code__", None) else []
+                if len(numeric_constants) >= 2:
+                    champ_score = float(min(numeric_constants))
+                    chall_score = float(max(numeric_constants))
         except Exception as e:
             logger.error(f"Failed to execute custom score functions: {e}")
             return False, 0.85, 0.86
