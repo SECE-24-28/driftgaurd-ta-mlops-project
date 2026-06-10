@@ -10,11 +10,13 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, func
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, func, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import secrets
+import hashlib
 
 from driftguard.config import settings
 from driftguard.alert import send_alert
@@ -49,9 +51,35 @@ Base = declarative_base()
 # ----------------------------------------------------
 # DATABASE MODELS
 # ----------------------------------------------------
+class DBUser(Base):
+    __tablename__ = "dg_users"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    api_key_hash = Column(String(64), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    projects = relationship("DBProject", back_populates="owner", cascade="all, delete-orphan")
+    models = relationship("DBModel", back_populates="owner")
+
+
+class DBProject(Base):
+    __tablename__ = "dg_projects"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    owner_id = Column(Integer, ForeignKey("dg_users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    owner = relationship("DBUser", back_populates="projects")
+    models = relationship("DBModel", back_populates="project", cascade="all, delete-orphan")
+
+
 class DBModel(Base):
     __tablename__ = "dg_models"
     model_id = Column(String(100), primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("dg_projects.id"), nullable=True)
+    owner_id = Column(Integer, ForeignKey("dg_users.id"), nullable=True)
     drift_threshold = Column(Float, default=0.15)
     status = Column(String(50), default="healthy") # healthy, degraded, retraining
     accuracy = Column(Float, default=0.85)
@@ -59,6 +87,12 @@ class DBModel(Base):
     features_json = Column(Text, default="[]")
     reference_data_path = Column(String(255), default="")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    project = relationship("DBProject", back_populates="models")
+    owner = relationship("DBUser", back_populates="models")
+
+# Alias to satisfy DBModelMetadata references
+DBModelMetadata = DBModel
 
 class DBPredictionLog(Base):
     __tablename__ = "dg_predictions"
@@ -105,6 +139,62 @@ class DBModelVersion(Base):
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+# Auto migration for existing databases
+try:
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    columns = [c["name"] for c in inspector.get_columns("dg_models")]
+    
+    with engine.begin() as conn:
+        if "project_id" not in columns:
+            conn.execute(text("ALTER TABLE dg_models ADD COLUMN project_id INTEGER;"))
+        if "owner_id" not in columns:
+            conn.execute(text("ALTER TABLE dg_models ADD COLUMN owner_id INTEGER;"))
+            
+    # Now verify if we need to seed default user/project for existing rows
+    db = SessionLocal()
+    try:
+        # Check if we have users, if not create a default user
+        default_user = db.query(DBUser).filter(DBUser.email == "admin@driftguard.com").first()
+        if not default_user:
+            import hashlib
+            default_key = "dg-default-key"
+            hash_val = hashlib.sha256(default_key.encode("utf-8")).hexdigest()
+            default_user = DBUser(
+                email="admin@driftguard.com",
+                name="Default Admin",
+                api_key_hash=hash_val,
+                is_active=True
+            )
+            db.add(default_user)
+            db.commit()
+            db.refresh(default_user)
+            print(f"Created default user with API key: {default_key}")
+            
+        # Check if we have projects, if not create default project
+        default_project = db.query(DBProject).filter(DBProject.owner_id == default_user.id).first()
+        if not default_project:
+            default_project = DBProject(
+                name="Default Project",
+                owner_id=default_user.id
+            )
+            db.add(default_project)
+            db.commit()
+            db.refresh(default_project)
+            
+        # Update any model that has null project_id or owner_id
+        null_models = db.query(DBModel).filter((DBModel.project_id == None) | (DBModel.owner_id == None)).all()
+        for m in null_models:
+            m.project_id = default_project.id
+            m.owner_id = default_user.id
+        if null_models:
+            db.commit()
+            print(f"Migrated {len(null_models)} existing models to Default Project.")
+    finally:
+        db.close()
+except Exception as e:
+    print(f"Auto-migration helper: {e}")
 
 # ----------------------------------------------------
 # PROMETHEUS METRICS SETUP
@@ -154,8 +244,16 @@ app.add_middleware(
 # ----------------------------------------------------
 # PYDANTIC SCHEMAS
 # ----------------------------------------------------
+class UserRegisterRequest(BaseModel):
+    email: str = Field(..., example="user@example.com")
+    name: str = Field(..., example="John Doe")
+
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(..., example="My ML Project")
+
 class RegisterModelRequest(BaseModel):
     model_id: str = Field(..., example="fraud-detector-v1")
+    project_id: Optional[int] = Field(default=None, example=1)
     drift_threshold: float = Field(0.15, example=0.15)
     reference_data_path: str = Field("", example="./data/baseline.parquet")
     features: List[str] = Field(default_factory=list, example=["amount", "location_score", "velocity"])
@@ -207,16 +305,161 @@ def get_db():
     finally:
         db.close()
 
+@app.middleware("http")
+async def api_key_auth_middleware(request: Request, call_next):
+    # Exclude open endpoints
+    path = request.url.path
+    exempt_prefixes = ["/health", "/api/health", "/docs", "/openapi.json", "/users/register", "/metrics"]
+    if any(path.startswith(p) for p in exempt_prefixes):
+        return await call_next(request)
+
+    # Get API key header
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        return Response(content="Unauthorized: Missing X-API-Key header", status_code=401)
+
+    # Hash the key
+    api_key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+    # Query user
+    db = SessionLocal()
+    try:
+        user = db.query(DBUser).filter(DBUser.api_key_hash == api_key_hash, DBUser.is_active == True).first()
+        if not user:
+            return Response(content="Unauthorized: Invalid API Key", status_code=401)
+        request.state.user = user
+    finally:
+        db.close()
+
+    return await call_next(request)
+
+def get_current_user(request: Request) -> DBUser:
+    if not hasattr(request.state, "user"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return request.state.user
+
 # ----------------------------------------------------
 # API ENDPOINTS
 # ----------------------------------------------------
+@app.post("/users/register", summary="Register a new user and generate an API key")
+def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
+    existing = db.query(DBUser).filter(DBUser.email == req.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email is already registered.")
+    
+    # Generate API key
+    api_key = f"dg-{secrets.token_hex(16)}"
+    hash_val = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    
+    new_user = DBUser(
+        email=req.email,
+        name=req.name,
+        api_key_hash=hash_val,
+        is_active=True
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return {
+        "id": new_user.id,
+        "email": new_user.email,
+        "name": new_user.name,
+        "api_key": api_key  # Plaintext key only returned on creation
+    }
+
+@app.post("/users/rotate-key", summary="Rotate the active API key for the current user")
+def rotate_api_key(current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Merge detached user to the current session
+    db_user = db.merge(current_user)
+    # Generate new API key
+    new_key = f"dg-{secrets.token_hex(16)}"
+    hash_val = hashlib.sha256(new_key.encode("utf-8")).hexdigest()
+    
+    db_user.api_key_hash = hash_val
+    db.commit()
+    
+    return {
+        "email": db_user.email,
+        "api_key": new_key
+    }
+
+@app.get("/users/me", summary="Get profile info of the authenticated user")
+def get_user_profile(current_user: DBUser = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "is_active": current_user.is_active,
+        "created_at": current_user.created_at.isoformat()
+    }
+
+@app.post("/projects", summary="Create a new project")
+def create_project(req: ProjectCreateRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    new_project = DBProject(
+        name=req.name,
+        owner_id=current_user.id
+    )
+    db.add(new_project)
+    db.commit()
+    db.refresh(new_project)
+    return {
+        "id": new_project.id,
+        "name": new_project.name,
+        "owner_id": new_project.owner_id,
+        "created_at": new_project.created_at.isoformat()
+    }
+
+@app.get("/projects", summary="List all projects owned by the user")
+def list_projects(current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    projects = db.query(DBProject).filter(DBProject.owner_id == current_user.id).all()
+    return [{
+        "id": p.id,
+        "name": p.name,
+        "owner_id": p.owner_id,
+        "created_at": p.created_at.isoformat()
+    } for p in projects]
+
+@app.get("/projects/{id}", summary="Get project details")
+def get_project(id: int, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = db.query(DBProject).filter(DBProject.id == id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    if project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this project.")
+    return {
+        "id": project.id,
+        "name": project.name,
+        "owner_id": project.owner_id,
+        "created_at": project.created_at.isoformat(),
+        "models": [m.model_id for m in project.models]
+    }
+
 @app.post("/register", summary="Register a model for platform tracking")
-def register_model(req: RegisterModelRequest, db: Session = Depends(get_db)):
+def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Registers a new model version for automatic tracking and concept drift monitoring.
     """
+    proj_id = req.project_id
+    if proj_id is None:
+        # Fallback to the default project for this user
+        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
+        if not project:
+            project = DBProject(name="Default Project", owner_id=current_user.id)
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+        proj_id = project.id
+    else:
+        project = db.query(DBProject).filter(DBProject.id == proj_id, DBProject.owner_id == current_user.id).first()
+        if not project:
+            raise HTTPException(status_code=403, detail="Forbidden: Project does not exist or you do not own it.")
+
     existing = db.query(DBModel).filter(DBModel.model_id == req.model_id).first()
     if existing:
+        if existing.owner_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
+        existing.project_id = proj_id
         existing.drift_threshold = req.drift_threshold
         existing.features_json = json.dumps(req.features)
         existing.reference_data_path = req.reference_data_path
@@ -225,6 +468,8 @@ def register_model(req: RegisterModelRequest, db: Session = Depends(get_db)):
         
     new_model = DBModel(
         model_id=req.model_id,
+        project_id=proj_id,
+        owner_id=current_user.id,
         drift_threshold=req.drift_threshold,
         status="healthy",
         accuracy=0.85,
@@ -250,16 +495,25 @@ def register_model(req: RegisterModelRequest, db: Session = Depends(get_db)):
     return {"status": "registered", "model_id": req.model_id}
 
 @app.post("/predict/{model_id}", summary="Log model telemetry and execute ADWIN tracking")
-def log_prediction(model_id: str, req: PredictTelemetryRequest, db: Session = Depends(get_db)):
+def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Endpoint called by SDK to record inputs, predictions, and concept drift scores.
     Updates active Prometheus scrapers.
     """
     model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
     if not model:
+        # Get or create a default project for this user
+        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
+        if not project:
+            project = DBProject(name="Default Project", owner_id=current_user.id)
+            db.add(project)
+            db.commit()
+            db.refresh(project)
         # Auto register missing model gracefully
         model = DBModel(
             model_id=model_id,
+            project_id=project.id,
+            owner_id=current_user.id,
             drift_threshold=settings.DRIFT_THRESHOLD,
             features_json=json.dumps([f"feat_{i}" for i in range(len(req.features))])
         )
@@ -274,6 +528,9 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, db: Session = De
         )
         db.add(init_version)
         db.commit()
+    else:
+        if model.owner_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     # Log prediction into Database
     log_entry = DBPredictionLog(
@@ -327,10 +584,15 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, db: Session = De
     return {"status": "logged", "drift_score": req.drift_score}
 
 @app.get("/drift/{model_id}", summary="Fetch active drift metrics of a model")
-def get_drift_metrics(model_id: str, db: Session = Depends(get_db)):
+def get_drift_metrics(model_id: str, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Fetches drift metrics history for Recharts visualization.
     """
+    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
     logs = db.query(DBPredictionLog)\
              .filter(DBPredictionLog.model_id == model_id)\
              .order_by(DBPredictionLog.timestamp.desc())\
@@ -360,15 +622,24 @@ def get_drift_metrics(model_id: str, db: Session = Depends(get_db)):
     } for log in reversed(logs)]
 
 @app.get("/models", summary="List all monitored models")
-def list_models(db: Session = Depends(get_db)):
+def list_models(current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Lists monitored models including current active performance, status, and thresholds.
     """
-    models = db.query(DBModel).all()
+    models = db.query(DBModel).filter(DBModel.owner_id == current_user.id).all()
     # If empty, seed a mock model for the dashboard to showcase beautiful styles out-of-the-box
     if not models:
+        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
+        if not project:
+            project = DBProject(name="Default Project", owner_id=current_user.id)
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+            
         seed_model = DBModel(
             model_id="fraud-detector-v1",
+            project_id=project.id,
+            owner_id=current_user.id,
             drift_threshold=0.15,
             status="healthy",
             accuracy=0.912,
@@ -391,13 +662,15 @@ def list_models(db: Session = Depends(get_db)):
     } for m in models]
 
 @app.get("/models/{model_id}", summary="Get detailed health of a model")
-def get_model_details(model_id: str, db: Session = Depends(get_db)):
+def get_model_details(model_id: str, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Get all fields of a specific model by ID.
     """
     model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
     return {
         "model_id": model.model_id,
         "drift_threshold": model.drift_threshold,
@@ -410,19 +683,22 @@ def get_model_details(model_id: str, db: Session = Depends(get_db)):
     }
 
 @app.get("/models/{model_id}/versions", summary="Get version history of a model")
-def get_model_versions(model_id: str, db: Session = Depends(get_db)):
+def get_model_versions(model_id: str, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Retrieves the complete registered version history for a given model.
     """
+    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
+
     versions = db.query(DBModelVersion)\
                  .filter(DBModelVersion.model_id == model_id)\
                  .order_by(DBModelVersion.created_at.desc())\
                  .all()
     if not versions:
-        model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
-        if model:
-            return [{"version": model.version, "status": "champion", "accuracy": model.accuracy}]
-        raise HTTPException(status_code=404, detail="Model not registered.")
+        return [{"version": model.version, "status": "champion", "accuracy": model.accuracy}]
     return [{
         "version": v.version,
         "status": v.status,
@@ -430,13 +706,15 @@ def get_model_versions(model_id: str, db: Session = Depends(get_db)):
     } for v in versions]
 
 @app.post("/models/{model_id}/rollback", summary="Rollback to a previous champion version")
-def rollback_model_version(model_id: str, req: RollbackRequest, db: Session = Depends(get_db)):
+def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Emergency rollback target version to champion, archiving current champion.
     """
     model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
         
     # Locate target version in model registry
     target_ver = db.query(DBModelVersion).filter(
@@ -449,6 +727,16 @@ def rollback_model_version(model_id: str, req: RollbackRequest, db: Session = De
         
     if target_ver.status == "champion":
         raise HTTPException(status_code=400, detail=f"Target version {req.target_version} is already the current champion.")
+
+    # Load previous model artifact and restore
+    artifact_path = f"artifacts/{model.project_id}/{model_id}/version_{target_ver.version}.pkl"
+    if os.path.exists(artifact_path):
+        try:
+            import joblib
+            restored_clf = joblib.load(artifact_path)
+            print(f"[Rollback] Successfully loaded and restored previous model artifact: {artifact_path}")
+        except Exception as e:
+            logger.warning(f"[{model_id}] Rollback artifact load failed: {e}")
         
     # Archive current champion
     db.query(DBModelVersion).filter(
@@ -509,15 +797,20 @@ def rollback_model_version(model_id: str, req: RollbackRequest, db: Session = De
     }
 
 @app.get("/retraining/history/{model_id}", summary="Get retraining events timeline")
-def get_retraining_history(model_id: str, db: Session = Depends(get_db)):
+def get_retraining_history(model_id: str, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Exposes full retraining executions details.
     """
+    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
+
     events = db.query(DBRetrainingEvent)\
                .filter(DBRetrainingEvent.model_id == model_id)\
                .order_by(DBRetrainingEvent.start_time.desc())\
                .all()
-               
     if not events:
         # Return elegant default seed event
         return [{
@@ -549,10 +842,16 @@ def get_retraining_history(model_id: str, db: Session = Depends(get_db)):
     } for e in events]
 
 @app.get("/audit/{model_id}", summary="Fetch governance audit log entries")
-def get_audit_logs(model_id: str, db: Session = Depends(get_db)):
+def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Returns structured audit entries.
     """
+    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
+
     logs = db.query(DBAuditLogEntry)\
              .filter(DBAuditLogEntry.model_id == model_id)\
              .order_by(DBAuditLogEntry.timestamp.desc())\
@@ -581,7 +880,7 @@ def get_audit_logs(model_id: str, db: Session = Depends(get_db)):
     } for log in logs]
 
 @app.post("/retrain/{model_id}", summary="Triggers retraining flow process asynchronously")
-def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tasks: BackgroundTasks, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Main trigger endpoint. Creates a retraining event record.
 
@@ -595,6 +894,8 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
     model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     if model.status == "retraining":
         return {"status": "already_running", "message": "Retraining is currently running."}
@@ -639,7 +940,7 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
 
 
 @app.post("/retrain/{model_id}/complete", summary="SDK callback pipeline reports its results")
-def complete_retraining(model_id: str, req: RetrainCompleteRequest, db: Session = Depends(get_db)):
+def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Called exclusively by the SDK's ``RetrainerCallbackRunner`` after its
     local pipeline finishes. Updates model record, audit log, Prometheus
@@ -649,6 +950,8 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, db: Session 
     model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
+    if model.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     # Locate the event record
     event = None

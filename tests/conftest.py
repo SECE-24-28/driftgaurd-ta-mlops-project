@@ -33,7 +33,36 @@ def client():
     """
     # Force sqlite tables setup for isolated testing
     Base.metadata.create_all(bind=engine)
-    with TestClient(app) as test_client:
+    
+    # Seed default user and project
+    from main import DBUser, DBProject
+    import hashlib
+    db = SessionLocal()
+    try:
+        default_key = "dg-default-key"
+        hash_val = hashlib.sha256(default_key.encode("utf-8")).hexdigest()
+        user = db.query(DBUser).filter(DBUser.api_key_hash == hash_val).first()
+        if not user:
+            user = DBUser(
+                email="admin@driftguard.com",
+                name="Default Admin",
+                api_key_hash=hash_val,
+                is_active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            
+            project = DBProject(
+                name="Default Project",
+                owner_id=user.id
+            )
+            db.add(project)
+            db.commit()
+    finally:
+        db.close()
+        
+    with TestClient(app, headers={"X-API-Key": "dg-default-key"}) as test_client:
         yield test_client
     # Clean up tables
     Base.metadata.drop_all(bind=engine)
