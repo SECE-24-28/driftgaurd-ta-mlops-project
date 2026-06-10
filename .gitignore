@@ -198,3 +198,6 @@ ehthumbs.db
 Thumbs.db
 *.db
 driftguard_metadata.db
+__pycache__/
+*.py[cod]
+*$py.class
