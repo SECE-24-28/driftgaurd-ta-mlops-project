@@ -196,3 +196,5 @@ Desktop.ini
 .Trashes
 ehthumbs.db
 Thumbs.db
+*.db
+driftguard_metadata.db
