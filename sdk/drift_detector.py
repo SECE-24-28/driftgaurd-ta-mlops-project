@@ -50,13 +50,23 @@ class ADWINDriftDetector:
     """
     Adaptive Windowing (ADWIN) detector for real-time feature-level concept drift tracking.
     """
-    def __init__(self, num_features: int, decay_rate: float = 0.95):
+    def __init__(
+        self,
+        num_features: int,
+        decay_rate: float = 0.95,
+        reference_data: "np.ndarray | None" = None,
+    ):
         """
         Initialize ADWIN detector.
-        
+
         Args:
-            num_features: Number of features to track.
-            decay_rate: Slow decay coefficient for running drift score.
+            num_features:   Number of features to track.
+            decay_rate:     Decay coefficient for running drift score.
+            reference_data: Optional 2-D array of shape (n_samples, num_features)
+                            representing the training / reference distribution.
+                            When supplied, the z-score baseline is pre-seeded from
+                            this data so drift is immediately detectable on the
+                            first live prediction.
         """
         self.num_features = num_features
         self.decay_rate = decay_rate
@@ -64,41 +74,94 @@ class ADWINDriftDetector:
         self.feature_drift_scores = [0.0 for _ in range(num_features)]
         self.global_drift_score = 0.0
 
+        # Running statistics for z-score distance scoring (Welford online algorithm)
+        self._counts = [0] * num_features
+        self._means = [0.0] * num_features
+        self._m2s = [0.0] * num_features
+
+        # Seed baseline from reference data if provided
+        if reference_data is not None:
+            ref = np.asarray(reference_data, dtype=np.float64)
+            if ref.ndim == 1:
+                ref = ref.reshape(-1, 1)
+            for sample in ref:
+                flat = sample.flatten()[:num_features]
+                for i, v in enumerate(flat):
+                    self._update_running_stats(i, float(v))
+            logger.debug(
+                f"ADWINDriftDetector seeded from reference data: "
+                f"{len(ref)} samples, {num_features} features."
+            )
+
+    def _update_running_stats(self, i: int, val: float):
+        """Welford online mean/variance update for feature index i."""
+        self._counts[i] += 1
+        delta = val - self._means[i]
+        self._means[i] += delta / self._counts[i]
+        delta2 = val - self._means[i]
+        self._m2s[i] += delta * delta2
+
+    def _z_score_drift(self, i: int, val: float) -> float:
+        """
+        Compute normalized distance of val from the historical mean.
+        Returns a score in [0, 1]. Requires at least 2 samples (for variance).
+        """
+        n = self._counts[i]
+        if n < 2:
+            return 0.0
+        mean = self._means[i]
+        variance = self._m2s[i] / n if n > 0 else 0.0
+        std = max(variance ** 0.5, 1e-8)
+        z = abs(val - mean) / std
+        # Soft normalization: z=2 -> 0.5, z=3 -> 0.75, z=10 -> 0.83, capped at 1.0
+        return min(z / (z + 2.0), 1.0)
+
     def update(self, features: np.ndarray) -> float:
         """
         Update the detectors with a single prediction vector.
-        
+
         Args:
             features: 1D numpy array representing feature values of a single sample.
-            
+
         Returns:
             Running global drift score bounded between 0.0 and 1.0.
         """
         # Ensure flat shape
         flat_features = np.asarray(features).flatten()
         if len(flat_features) != self.num_features:
-            # Dynamically adjust or truncate
             if len(flat_features) < self.num_features:
                 flat_features = np.pad(flat_features, (0, self.num_features - len(flat_features)))
             else:
                 flat_features = flat_features[:self.num_features]
-                
-        drift_detected_count = 0
+
+        max_feature_score = 0.0
         for i, val in enumerate(flat_features):
+            val = float(val)
+
+            # Update Welford running stats BEFORE ADWIN so baseline reflects historical data
+            self._update_running_stats(i, val)
+
+            # ADWIN boolean change detection (detects mean-shift in the stream itself)
             self.detectors[i].update(val)
 
-            # If drift is detected by ADWIN, jump feature score to 1.0
+            # Z-score distance from historical mean (detects out-of-distribution values)
+            z_score = self._z_score_drift(i, val)
+
             if _is_detector_drifting(self.detectors[i]):
                 logger.warning(f"ADWIN detected concept drift on feature index {i}!")
                 self.feature_drift_scores[i] = 1.0
-                drift_detected_count += 1
             else:
-                # Decay old scores only while the feature is stable.
-                self.feature_drift_scores[i] *= self.decay_rate
-                
-        # Global drift score tracks the highest observed feature score so a detected
-        # drift event does not immediately disappear on later stable samples.
-        self.global_drift_score = float(max(self.global_drift_score, max(self.feature_drift_scores)))
+                # Combine ADWIN decay with z-score signal
+                # Z-score dominates when values are far from historical distribution
+                decayed = self.feature_drift_scores[i] * self.decay_rate
+                self.feature_drift_scores[i] = max(decayed, z_score)
+
+            max_feature_score = max(max_feature_score, self.feature_drift_scores[i])
+
+        # Global score is the max across all features
+        self.global_drift_score = float(
+            max(self.global_drift_score * self.decay_rate, max_feature_score)
+        )
         return self.global_drift_score
 
     def get_status(self) -> Dict[str, Any]:

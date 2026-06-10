@@ -159,6 +159,28 @@ class PredictTelemetryRequest(BaseModel):
 class RetrainTriggerRequest(BaseModel):
     drift_score: float = Field(0.15, example=0.21)
     triggered_by: str = Field("automatic", example="automatic")
+    source: str = Field(
+        "server",
+        example="server",
+        description=(
+            "Origin of the retrain request. "
+            "'server' = run the built-in server-side pipeline (default). "
+            "'sdk_callback' = SDK will run its own pipeline; server only records the event."
+        ),
+    )
+
+
+class RetrainCompleteRequest(BaseModel):
+    """
+    Posted by the SDK CallbackRunner when its local pipeline finishes.
+    The server uses this to update the model record, audit log, and metrics.
+    """
+    event_id: Optional[int] = Field(None, description="Retraining event DB row id.")
+    validation_passed: bool = Field(..., description="True if challenger beat champion.")
+    new_version: Optional[str] = Field(None, example="1.0.5")
+    new_accuracy: Optional[float] = Field(None, example=0.934)
+    old_accuracy: Optional[float] = Field(None, example=0.912)
+    error: Optional[str] = Field(None, description="Error message if pipeline failed.")
 
 class EvidentlyCalculateRequest(BaseModel):
     reference_data: List[Dict[str, Any]]
@@ -432,12 +454,19 @@ def get_audit_logs(model_id: str, db: Session = Depends(get_db)):
 @app.post("/retrain/{model_id}", summary="Triggers retraining flow process asynchronously")
 def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
-    Main trigger endpoint. Starts background thread to run Retraining flow step-by-step.
+    Main trigger endpoint. Creates a retraining event record.
+
+    If ``source == 'server'`` (default): spawns the built-in server-side
+    pipeline as a background task.
+
+    If ``source == 'sdk_callback'``: only records the event — the SDK
+    CallbackRunner owns the pipeline and will POST results to
+    ``/retrain/{model_id}/complete`` when done.
     """
     model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-        
+
     if model.status == "retraining":
         return {"status": "already_running", "message": "Retraining is currently running."}
 
@@ -459,7 +488,16 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
     # Expose retrain counter to prometheus
     retrain_counter.labels(model_id=model_id, triggered_by=req.triggered_by).inc()
 
-    # Push to FastAPI background executor
+    if req.source == "sdk_callback":
+        # SDK owns the pipeline — do NOT spawn a server-side background task.
+        # The SDK CallbackRunner will POST /retrain/{model_id}/complete when done.
+        return {
+            "status": "recorded",
+            "event_id": event.id,
+            "message": "Event recorded. SDK callback pipeline will report results via /complete.",
+        }
+
+    # Default: push to FastAPI background executor (server-side pipeline)
     background_tasks.add_task(
         run_retraining_process,
         model_id=model_id,
@@ -469,6 +507,139 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
     )
 
     return {"status": "triggered", "event_id": event.id, "message": "Retraining initiated in background task."}
+
+
+@app.post("/retrain/{model_id}/complete", summary="SDK callback pipeline reports its results")
+def complete_retraining(model_id: str, req: RetrainCompleteRequest, db: Session = Depends(get_db)):
+    """
+    Called exclusively by the SDK's ``RetrainerCallbackRunner`` after its
+    local pipeline finishes. Updates model record, audit log, Prometheus
+    metrics, and Slack alerts — identical post-processing to the server-side
+    pipeline, but driven by externally-produced results.
+    """
+    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not registered.")
+
+    # Locate the event record
+    event = None
+    if req.event_id:
+        event = db.query(DBRetrainingEvent).filter(
+            DBRetrainingEvent.id == req.event_id
+        ).first()
+    if event is None:
+        # Fall back to the latest running event for this model
+        event = (
+            db.query(DBRetrainingEvent)
+            .filter(
+                DBRetrainingEvent.model_id == model_id,
+                DBRetrainingEvent.status == "running",
+            )
+            .order_by(DBRetrainingEvent.start_time.desc())
+            .first()
+        )
+
+    if req.validation_passed and req.new_version and req.new_accuracy is not None:
+        # ── Challenger promoted ──────────────────────────────────────────
+        old_version = model.version
+        old_accuracy = req.old_accuracy if req.old_accuracy is not None else model.accuracy
+
+        model.status = "healthy"
+        model.accuracy = req.new_accuracy
+        model.version = req.new_version
+
+        if event:
+            event.status = "completed"
+            event.end_time = datetime.datetime.utcnow()
+            event.new_accuracy = req.new_accuracy
+            event.new_version = req.new_version
+            event.details_json = json.dumps(
+                {"message": "Promoted by SDK callback pipeline.",
+                 "source": "sdk_callback"}
+            )
+
+        # Write promotion audit entry
+        db.add(DBAuditLogEntry(
+            model_id=model_id,
+            event_type="model_promoted",
+            model_version=req.new_version,
+            drift_score=0.0,
+            triggered_by="automatic",
+            details_json=json.dumps({
+                "message": (
+                    f"SDK callback challenger {req.new_version} promoted. "
+                    f"Accuracy {old_accuracy:.4f} → {req.new_accuracy:.4f}."
+                ),
+                "source": "sdk_callback",
+                "old_version": old_version,
+                "new_version": req.new_version,
+                "old_accuracy": old_accuracy,
+                "new_accuracy": req.new_accuracy,
+            })
+        ))
+        db.commit()
+
+        # Update Prometheus gauge
+        accuracy_gauge.labels(model_id=model_id, version=req.new_version).set(req.new_accuracy)
+
+        # Slack alert
+        send_alert(
+            event_type="model_promoted",
+            message=f"SDK callback: '{model_id}' v{req.new_version} promoted to champion!",
+            details={
+                "model_id": model_id,
+                "old_version": old_version,
+                "new_version": req.new_version,
+                "old_accuracy": f"{old_accuracy:.4f}",
+                "new_accuracy": f"{req.new_accuracy:.4f}",
+                "source": "sdk_callback",
+            },
+        )
+
+        return {
+            "status": "promoted",
+            "model_id": model_id,
+            "new_version": req.new_version,
+            "new_accuracy": req.new_accuracy,
+        }
+
+    else:
+        # ── Challenger rejected or pipeline error ──────────────────────────
+        model.status = "healthy"  # revert from "retraining" regardless
+
+        if event:
+            event.status = "failed"
+            event.end_time = datetime.datetime.utcnow()
+            event.details_json = json.dumps(
+                {"error": req.error or "Challenger did not pass validation.",
+                 "source": "sdk_callback"}
+            )
+
+        # Write rejection audit entry
+        db.add(DBAuditLogEntry(
+            model_id=model_id,
+            event_type="validation_failed",
+            model_version=model.version,
+            drift_score=req.new_accuracy or 0.0,
+            triggered_by="automatic",
+            details_json=json.dumps(
+                {"error": req.error or "Challenger did not pass validation.",
+                 "source": "sdk_callback"}
+            ),
+        ))
+        db.commit()
+
+        send_alert(
+            event_type="validation_failed",
+            message=f"SDK callback: challenger for '{model_id}' rejected. Champion retained.",
+            details={"model_id": model_id, "reason": req.error or "N/A", "source": "sdk_callback"},
+        )
+
+        return {
+            "status": "rejected",
+            "model_id": model_id,
+            "reason": req.error or "Challenger did not pass validation.",
+        }
 
 @app.post("/evidently/calculate", summary="Isolated Evidently calculations REST endpoint")
 def calculate_evidently_drift_endpoint(req: EvidentlyCalculateRequest):

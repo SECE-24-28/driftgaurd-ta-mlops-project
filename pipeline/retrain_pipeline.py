@@ -69,10 +69,24 @@ logger = logging.getLogger("DriftGuard.RetrainPipeline")
 @step
 def data_ingestion_step(model_id: str) -> pd.DataFrame:
     """
-    Ingests latest model features from database/parquet windows.
+    Ingests training features for the server-side fallback pipeline.
+
+    WARNING — DEMO DATA
+    --------------------
+    This step loads the scikit-learn breast cancer dataset as a **demo
+    fallback** for the built-in server-side retraining pipeline.  It is
+    intentionally NOT connected to production telemetry.  Production
+    telemetry (the ``dg_predictions`` table) must never automatically become
+    training data.
+
+    To use your own trusted dataset, register a callback with
+    ``@dg.retrainer`` in your SDK client code instead.  The callback runs
+    entirely inside your process and loads whatever data source you specify.
     """
-    logger.info(f"[{model_id}] Step 1: Ingesting training features...")
-    # Fetch historical feature rows. In local simulations, we use breast cancer dataset.
+    logger.warning(
+        f"[{model_id}] SERVER-SIDE DEMO PIPELINE: loading breast cancer dataset. "
+        "Register @dg.retrainer in the SDK to use your own trusted data."
+    )
     from sklearn.datasets import load_breast_cancer
     data = load_breast_cancer()
     df = pd.DataFrame(data.data, columns=[f"feature_{i}" for i in range(data.data.shape[1])])
@@ -345,9 +359,15 @@ def run_retraining_flow(model_id: str, current_accuracy: float, current_version:
     Runs validation, retraining, validation vs champion, and canary deployment.
     """
     logger.info(f"--- Starting Autonomous Retraining Flow for model '{model_id}' ---")
-    
+    logger.warning(
+        f"[{model_id}] SERVER-SIDE DEMO PIPELINE activated. "
+        "This pipeline uses the scikit-learn breast cancer dataset as demo training data. "
+        "It does NOT use production telemetry or user-supplied datasets. "
+        "Register @dg.retrainer in your SDK client to supply your own trusted training data."
+    )
+
     # Step 1: Ingestion & GE Data Validation
-    # Load dataset
+    # Load demo dataset (see data_ingestion_step docstring for why)
     from sklearn.datasets import load_breast_cancer
     data = load_breast_cancer()
     df = pd.DataFrame(data.data, columns=[f"feature_{i}" for i in range(data.data.shape[1])])
