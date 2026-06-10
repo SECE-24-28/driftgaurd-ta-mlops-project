@@ -76,6 +76,12 @@ class RetrainerCallbackRunner:
             # Step 3 — Validate challenger against champion
             validation_passed, champ_score, chall_score = self._validate(challenger_model)
 
+            print("\n===== VALIDATION RESULTS =====")
+            print("Champion:", champ_score)
+            print("Challenger:", chall_score)
+            print("Passed:", validation_passed)
+            print("==============================\n")
+
             if not validation_passed:
                 reason = (
                     f"Challenger accuracy {chall_score:.4f} did not beat "
@@ -86,16 +92,37 @@ class RetrainerCallbackRunner:
                 return False
 
             # Step 4 — Promote challenger
+            print("PROMOTION STAGE STARTED")
             new_version = self._bump_version(current_version)
+            print(f"NEW VERSION = {new_version}")
+
+            # Persist challenger model before promotion
+            if self.tracker.project_id:
+                try:
+                    import joblib
+                    import os
+                    dir_path = f"artifacts/{self.tracker.project_id}/{self.model_id}"
+                    os.makedirs(dir_path, exist_ok=True)
+                    file_path = f"{dir_path}/version_{new_version}.pkl"
+                    joblib.dump(challenger_model, file_path)
+                    print(f"PERSISTED CHALLENGER MODEL TO {file_path}")
+                    logger.info(f"[{self.model_id}] Persisted challenger model before promotion to {file_path}")
+                except Exception as e:
+                    print(f"FAILED TO PERSIST CHALLENGER MODEL: {e}")
+                    logger.warning(f"[{self.model_id}] Failed to persist challenger model: {e}")
+
+            print("POSTING COMPLETION EVENT")
             self._report_success(
                 event_id=event_id,
                 new_version=new_version,
                 new_accuracy=chall_score,
                 old_accuracy=champ_score,
             )
+            print("COMPLETION EVENT POSTED")
 
             # Step 5 — Update local champion reference so next comparison is correct
             self.tracker._champion_model = challenger_model
+            print("CHAMPION UPDATED")
 
             logger.info(
                 f"[{self.model_id}] Challenger promoted: "
@@ -105,6 +132,8 @@ class RetrainerCallbackRunner:
             return True
 
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             logger.error(
                 f"[{self.model_id}] Callback retraining pipeline failed: {exc}",
                 exc_info=True,
@@ -200,8 +229,9 @@ class RetrainerCallbackRunner:
     def _get_current_version(self) -> str:
         """Fetch the model's current version string from the API."""
         try:
+            headers = {"X-API-Key": self.tracker.api_key} if self.tracker.api_key else {}
             with httpx.Client(timeout=5.0) as client:
-                resp = client.get(f"{self.api_url}/models/{self.model_id}")
+                resp = client.get(f"{self.api_url}/models/{self.model_id}", headers=headers)
                 if resp.status_code == 200:
                     return resp.json().get("version", "1.0.0")
         except Exception as exc:
@@ -225,6 +255,7 @@ class RetrainerCallbackRunner:
         NOT spawn its own background retraining task.
         """
         try:
+            headers = {"X-API-Key": self.tracker.api_key} if self.tracker.api_key else {}
             with httpx.Client(timeout=5.0) as client:
                 resp = client.post(
                     f"{self.api_url}/retrain/{self.model_id}",
@@ -233,6 +264,7 @@ class RetrainerCallbackRunner:
                         "triggered_by": "automatic",
                         "source": "sdk_callback",
                     },
+                    headers=headers,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -259,6 +291,7 @@ class RetrainerCallbackRunner:
     ) -> None:
         """POST callback pipeline results to ``/retrain/{model_id}/complete``."""
         try:
+            headers = {"X-API-Key": self.tracker.api_key} if self.tracker.api_key else {}
             with httpx.Client(timeout=10.0) as client:
                 client.post(
                     f"{self.api_url}/retrain/{self.model_id}/complete",
@@ -270,6 +303,7 @@ class RetrainerCallbackRunner:
                         "old_accuracy": old_accuracy,
                         "error": None,
                     },
+                    headers=headers,
                 )
         except Exception as exc:
             logger.warning(
@@ -284,6 +318,7 @@ class RetrainerCallbackRunner:
     ) -> None:
         """Report a failed callback pipeline to ``/retrain/{model_id}/complete``."""
         try:
+            headers = {"X-API-Key": self.tracker.api_key} if self.tracker.api_key else {}
             with httpx.Client(timeout=10.0) as client:
                 client.post(
                     f"{self.api_url}/retrain/{self.model_id}/complete",
@@ -295,6 +330,7 @@ class RetrainerCallbackRunner:
                         "old_accuracy": None,
                         "error": reason,
                     },
+                    headers=headers,
                 )
         except Exception as exc:
             logger.warning(

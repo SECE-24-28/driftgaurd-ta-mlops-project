@@ -55,6 +55,8 @@ class ADWINDriftDetector:
         num_features: int,
         decay_rate: float = 0.95,
         reference_data: "np.ndarray | None" = None,
+        agg_strategy: str = "percentile_90",
+        z_threshold: float = 1.5,
     ):
         """
         Initialize ADWIN detector.
@@ -67,9 +69,15 @@ class ADWINDriftDetector:
                             When supplied, the z-score baseline is pre-seeded from
                             this data so drift is immediately detectable on the
                             first live prediction.
+            agg_strategy:   Method to aggregate individual feature scores into a global score.
+                            Options: 'max', 'mean', 'median', 'percentile_XX'.
+            z_threshold:    Z-score offset threshold to ignore minor feature variations.
         """
         self.num_features = num_features
         self.decay_rate = decay_rate
+        self.agg_strategy = agg_strategy
+        self.z_threshold = z_threshold
+
         self.detectors = [ADWIN() for _ in range(num_features)]
         self.feature_drift_scores = [0.0 for _ in range(num_features)]
         self.global_drift_score = 0.0
@@ -79,6 +87,7 @@ class ADWINDriftDetector:
         self._means = [0.0] * num_features
         self._m2s = [0.0] * num_features
 
+        self._reference_seeded = False
         # Seed baseline from reference data if provided
         if reference_data is not None:
             ref = np.asarray(reference_data, dtype=np.float64)
@@ -88,6 +97,7 @@ class ADWINDriftDetector:
                 flat = sample.flatten()[:num_features]
                 for i, v in enumerate(flat):
                     self._update_running_stats(i, float(v))
+            self._reference_seeded = True
             logger.debug(
                 f"ADWINDriftDetector seeded from reference data: "
                 f"{len(ref)} samples, {num_features} features."
@@ -113,8 +123,14 @@ class ADWINDriftDetector:
         variance = self._m2s[i] / n if n > 0 else 0.0
         std = max(variance ** 0.5, 1e-8)
         z = abs(val - mean) / std
-        # Soft normalization: z=2 -> 0.5, z=3 -> 0.75, z=10 -> 0.83, capped at 1.0
-        return min(z / (z + 2.0), 1.0)
+
+        # Z-score thresholding
+        if z < self.z_threshold:
+            return 0.0
+
+        # Soft normalization of the remainder
+        adjusted_z = z - self.z_threshold
+        return min(adjusted_z / (adjusted_z + 2.0), 1.0)
 
     def update(self, features: np.ndarray) -> float:
         """
@@ -134,33 +150,45 @@ class ADWINDriftDetector:
             else:
                 flat_features = flat_features[:self.num_features]
 
-        max_feature_score = 0.0
+        feature_scores = []
         for i, val in enumerate(flat_features):
             val = float(val)
 
-            # Update Welford running stats BEFORE ADWIN so baseline reflects historical data
-            self._update_running_stats(i, val)
+            # Update Welford running stats only if not pre-seeded with reference data
+            if not self._reference_seeded:
+                self._update_running_stats(i, val)
 
-            # ADWIN boolean change detection (detects mean-shift in the stream itself)
+            # ADWIN boolean change detection
             self.detectors[i].update(val)
 
-            # Z-score distance from historical mean (detects out-of-distribution values)
+            # Z-score distance from historical mean
             z_score = self._z_score_drift(i, val)
 
             if _is_detector_drifting(self.detectors[i]):
                 logger.warning(f"ADWIN detected concept drift on feature index {i}!")
                 self.feature_drift_scores[i] = 1.0
             else:
-                # Combine ADWIN decay with z-score signal
-                # Z-score dominates when values are far from historical distribution
                 decayed = self.feature_drift_scores[i] * self.decay_rate
                 self.feature_drift_scores[i] = max(decayed, z_score)
 
-            max_feature_score = max(max_feature_score, self.feature_drift_scores[i])
+            feature_scores.append(self.feature_drift_scores[i])
 
-        # Global score is the max across all features
+        # Aggregate individual feature scores
+        if self.agg_strategy == "max":
+            agg_score = max(feature_scores)
+        elif self.agg_strategy == "mean":
+            agg_score = sum(feature_scores) / len(feature_scores)
+        elif self.agg_strategy == "median":
+            agg_score = float(np.median(feature_scores))
+        elif self.agg_strategy.startswith("percentile_"):
+            pct = int(self.agg_strategy.split("_")[1])
+            agg_score = float(np.percentile(feature_scores, pct))
+        else:
+            agg_score = sum(feature_scores) / len(feature_scores)
+
+        # Global score decays or takes the aggregated feature score
         self.global_drift_score = float(
-            max(self.global_drift_score * self.decay_rate, max_feature_score)
+            max(self.global_drift_score * self.decay_rate, agg_score)
         )
         return self.global_drift_score
 
@@ -173,6 +201,7 @@ class ADWINDriftDetector:
             "feature_scores": self.feature_drift_scores,
             "drift_detected": self.global_drift_score > 0.5
         }
+
 
 
 def compute_evidently_drift(reference_df: pd.DataFrame, current_df: pd.DataFrame, target_col: str = None) -> Dict[str, Any]:

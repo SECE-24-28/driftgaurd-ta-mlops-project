@@ -24,6 +24,8 @@ class DriftGuard:
         self,
         model_id: str,
         api_url: str = None,
+        api_key: str = None,
+        project_id: int = None,
         drift_threshold: float = None,
         auto_retrain: bool = True
     ):
@@ -33,11 +35,18 @@ class DriftGuard:
         Args:
             model_id: Unique string identifier for the model.
             api_url: Address of the DriftGuard API. Defaults to environment config.
+            api_key: User API key for SaaS authentication.
+            project_id: Project scope ID for multi-tenant isolation.
             drift_threshold: Target drift metric threshold. Defaults to environment config.
             auto_retrain: If True, triggers FastAPI retraining flows automatically on threshold breach.
         """
+        import os
         self.model_id = model_id
         self.api_url = (api_url or settings.API_URL).rstrip("/")
+        self.api_key = api_key or os.getenv("DRIFTGUARD_API_KEY")
+        
+        proj_env = os.getenv("DRIFTGUARD_PROJECT_ID")
+        self.project_id = project_id if project_id is not None else (int(proj_env) if proj_env else None)
         self.drift_threshold = drift_threshold if drift_threshold is not None else settings.DRIFT_THRESHOLD
         self.auto_retrain = auto_retrain
 
@@ -53,6 +62,22 @@ class DriftGuard:
         # Set by dg.set_validation_data(X, y) — used inside CallbackRunner validation
         self._validation_features: Optional[Any] = None
         self._validation_labels: Optional[Any] = None
+
+        # Auto-restore champion model from disk if version matches
+        if self.project_id and self.api_key:
+            try:
+                import joblib
+                headers = {"X-API-Key": self.api_key}
+                with httpx.Client(timeout=2.0) as client:
+                    resp = client.get(f"{self.api_url}/models/{self.model_id}", headers=headers)
+                    if resp.status_code == 200:
+                        version = resp.json().get("version", "1.0.0")
+                        file_path = f"artifacts/{self.project_id}/{self.model_id}/version_{version}.pkl"
+                        if os.path.exists(file_path):
+                            self._champion_model = joblib.load(file_path)
+                            logger.info(f"[{self.model_id}] Auto-restored champion model version {version} from {file_path}")
+            except Exception as e:
+                logger.debug(f"[{self.model_id}] Could not auto-restore champion model: {e}")
 
         logger.info(f"Initialized DriftGuard SDK for model '{model_id}' against API: {self.api_url}")
 
@@ -120,6 +145,27 @@ class DriftGuard:
         """
         self._champion_model = model
         logger.info(f"[{self.model_id}] Champion model registered for comparison.")
+        if self.project_id:
+            try:
+                import joblib
+                import os
+                version = "1.0.0"
+                if self.api_key:
+                    try:
+                        headers = {"X-API-Key": self.api_key}
+                        with httpx.Client(timeout=2.0) as client:
+                            resp = client.get(f"{self.api_url}/models/{self.model_id}", headers=headers)
+                            if resp.status_code == 200:
+                                version = resp.json().get("version", "1.0.0")
+                    except Exception:
+                        pass
+                dir_path = f"artifacts/{self.project_id}/{self.model_id}"
+                os.makedirs(dir_path, exist_ok=True)
+                file_path = f"{dir_path}/version_{version}.pkl"
+                joblib.dump(model, file_path)
+                logger.info(f"[{self.model_id}] Persisted champion model to {file_path}")
+            except Exception as e:
+                logger.warning(f"[{self.model_id}] Failed to persist champion model: {e}")
 
     def set_validation_data(self, features: Any, labels: Any) -> None:
         """
@@ -156,8 +202,9 @@ class DriftGuard:
                 # Print payload and endpoint details for tracing
                 print(f"[DriftGuard SDK] POSTing telemetry to {url}")
                 print(f"[DriftGuard SDK] Payload: {payload}")
+                headers = {"X-API-Key": self.api_key} if self.api_key else {}
                 with httpx.Client(timeout=2.0) as client:
-                    resp = client.post(url, json=payload)
+                    resp = client.post(url, json=payload, headers=headers)
                     if resp.status_code == 200:
                         logger.debug("Successfully logged prediction telemetry to DriftGuard API")
                         print("[DriftGuard SDK] Telemetry logged successfully.")
@@ -233,8 +280,9 @@ class DriftGuard:
                         "triggered_by": "automatic",
                         "source": "server",
                     }
+                    headers = {"X-API-Key": self.api_key} if self.api_key else {}
                     with httpx.Client(timeout=5.0) as client:
-                        resp = client.post(url, json=payload)
+                        resp = client.post(url, json=payload, headers=headers)
                         if resp.status_code == 200:
                             logger.info(
                                 f"[{self.model_id}] Server-side retraining pipeline triggered."
