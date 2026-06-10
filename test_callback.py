@@ -1,4 +1,4 @@
-from sdk import DriftGuard
+from driftguard import DriftGuard
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.datasets import make_classification
 

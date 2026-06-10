@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Optional, Tuple
 import httpx
 
 if TYPE_CHECKING:
-    from sdk.tracker import DriftGuard
+    from driftguard.tracker import DriftGuard
 
 logger = logging.getLogger("DriftGuard.CallbackRunner")
 
@@ -183,7 +183,7 @@ class RetrainerCallbackRunner:
             )
             return True, 0.0, 1.0
 
-        from pipeline.validate_pipeline import validate_challenger_vs_champion
+        from driftguard.validation import validate_challenger_vs_champion
 
         return validate_challenger_vs_champion(
             champion_model=champion_model,

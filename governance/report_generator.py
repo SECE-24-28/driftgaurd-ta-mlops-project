@@ -17,7 +17,7 @@ try:
 except ImportError:
     REPORTLAB_AVAILABLE = False
 
-from sdk.config import settings
+from driftguard.config import settings
 
 def generate_pdf_report(
     model_id: str,

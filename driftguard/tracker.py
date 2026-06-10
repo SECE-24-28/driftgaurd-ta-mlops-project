@@ -9,8 +9,8 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Union
 import threading
 
-from sdk.config import settings
-from sdk.drift_detector import ADWINDriftDetector
+from driftguard.config import settings
+from driftguard.drift_detector import ADWINDriftDetector
 
 logger = logging.getLogger("DriftGuard.SDK")
 
@@ -206,7 +206,7 @@ class DriftGuard:
             def _run_callback_pipeline() -> None:
                 print("[DriftGuard] CALLBACK THREAD STARTED")
                 try:
-                    from sdk.callback_runner import RetrainerCallbackRunner
+                    from driftguard.callback_runner import RetrainerCallbackRunner
                     runner = RetrainerCallbackRunner(self)
                     runner.run(current_drift_score)
                 except Exception as exc:

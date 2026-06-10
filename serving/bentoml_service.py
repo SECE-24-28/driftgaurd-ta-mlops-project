@@ -81,7 +81,7 @@ if BENTOML_AVAILABLE:
         
         # 3. Telemetry metrics logging via DriftGuard SDK
         try:
-            from sdk.tracker import DriftGuard
+            from driftguard.tracker import DriftGuard
             # Instantiate SDK client to log this bento prediction in background
             dg = DriftGuard(model_id="fraud-detector-v1", auto_retrain=True)
             wrapped = dg.wrap(None)

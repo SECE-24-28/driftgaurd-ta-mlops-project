@@ -9,12 +9,9 @@ setup(
     description="DriftGuard — Autonomous Model Health Platform",
     author="DriftGuard Team",
     packages=find_packages(
-        exclude=[
-            ".venv*",
-            "venv*",
-            "tests*",
-            "examples*",
-            "*.egg-info",
+        include=[
+            "driftguard",
+            "driftguard.*",
         ]
     ),
     install_requires=[

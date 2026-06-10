@@ -13,8 +13,8 @@ try:
     import mlflow
 except ImportError:
     mlflow = None
-from sdk.config import settings
-from sdk.alert import send_alert
+from driftguard.config import settings
+from driftguard.alert import send_alert
 
 logger = logging.getLogger("DriftGuard.DeployPipeline")
 

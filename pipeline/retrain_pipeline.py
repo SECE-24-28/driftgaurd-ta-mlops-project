@@ -56,9 +56,9 @@ try:
 except ImportError:
     wandb = None
 
-from sdk.config import settings
-from sdk.alert import send_alert
-from pipeline.validate_pipeline import validate_challenger_vs_champion
+from driftguard.config import settings
+from driftguard.alert import send_alert
+from driftguard.validation import validate_challenger_vs_champion
 from pipeline.deploy_pipeline import deploy_canary_challenger
 
 logger = logging.getLogger("DriftGuard.RetrainPipeline")

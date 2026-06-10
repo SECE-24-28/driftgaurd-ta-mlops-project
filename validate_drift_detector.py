@@ -1,7 +1,7 @@
 import numpy as np
 import sys
 from sklearn.datasets import load_breast_cancer
-from sdk.drift_detector import ADWINDriftDetector, _is_detector_drifting
+from driftguard.drift_detector import ADWINDriftDetector, _is_detector_drifting
 
 class CustomADWINDriftDetector(ADWINDriftDetector):
     def __init__(self, num_features, decay_rate=0.95, reference_data=None, agg_strategy="max", z_threshold=0.0):

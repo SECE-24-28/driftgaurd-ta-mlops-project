@@ -11,9 +11,9 @@ import json
 import logging
 from typing import Dict, Any
 
-from sdk.config import settings
-from sdk.drift_detector import compute_evidently_drift
-from sdk.alert import send_alert
+from driftguard.config import settings
+from driftguard.drift_detector import compute_evidently_drift
+from driftguard.alert import send_alert
 
 logger = logging.getLogger("DriftGuard.DriftMonitor")
 

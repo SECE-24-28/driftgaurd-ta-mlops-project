@@ -8,7 +8,7 @@ import random
 import logging
 from typing import Dict, Any, Tuple
 
-from sdk.config import settings
+from driftguard.config import settings
 from governance.audit_log import write_audit_entry
 
 logger = logging.getLogger("DriftGuard.CanaryRouter")

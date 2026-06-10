@@ -1,8 +1,8 @@
 import pytest
 import time
 from unittest.mock import MagicMock, patch
-from sdk.tracker import DriftGuard
-from sdk.callback_runner import RetrainerCallbackRunner
+from driftguard.tracker import DriftGuard
+from driftguard.callback_runner import RetrainerCallbackRunner
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.datasets import make_classification
 

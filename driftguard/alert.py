@@ -6,7 +6,7 @@ import httpx
 import logging
 from typing import Dict, Any, Optional
 
-from sdk.config import settings
+from driftguard.config import settings
 
 logger = logging.getLogger("DriftGuard.Alert")
 

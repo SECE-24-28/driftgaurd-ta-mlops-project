@@ -5,8 +5,8 @@ Distributes, formats, and silences platform notifications based on severity rule
 import logging
 from typing import Dict, Any, Optional
 
-from sdk.alert import send_alert
-from sdk.config import settings
+from driftguard.alert import send_alert
+from driftguard.config import settings
 
 logger = logging.getLogger("DriftGuard.AlertManager")
 

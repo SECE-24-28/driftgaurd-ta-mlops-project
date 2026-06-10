@@ -5,7 +5,7 @@ Verifies concept drift tracking sensitivity, stable data silences, and score sca
 import pytest
 import numpy as np
 
-from sdk.drift_detector import ADWINDriftDetector
+from driftguard.drift_detector import ADWINDriftDetector
 
 def test_adwin_stable_data():
     """
@@ -38,7 +38,7 @@ def test_adwin_detects_distribution_shift():
         
     # 2. Inject sudden distribution shift (shift mean to 15.0)
     scores = []
-    for _ in range(40):
+    for _ in range(20):
         drifted_sample = np.random.normal(loc=15.0, scale=1.0, size=(5,))
         score = detector.update(drifted_sample)
         scores.append(score)

@@ -10,7 +10,7 @@ import datetime
 from typing import Dict, Any, Optional
 import threading
 
-from sdk.config import settings
+from driftguard.config import settings
 
 # Thread-safety lock
 _log_lock = threading.Lock()

@@ -16,8 +16,8 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-from sdk.config import settings
-from sdk.alert import send_alert
+from driftguard.config import settings
+from driftguard.alert import send_alert
 
 # Create database directory if using SQLite
 if settings.MLFLOW_TRACKING_URI.startswith("sqlite:///"):
@@ -93,6 +93,15 @@ class DBAuditLogEntry(Base):
     triggered_by = Column(String(50))
     details_json = Column(Text, default="{}")
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
+class DBModelVersion(Base):
+    __tablename__ = "dg_model_versions"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    model_id = Column(String(100), index=True)
+    version = Column(String(50), index=True)
+    status = Column(String(50))  # champion, candidate, archived, rolled_back
+    accuracy = Column(Float)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -187,6 +196,9 @@ class EvidentlyCalculateRequest(BaseModel):
     current_data: List[Dict[str, Any]]
     target_column: Optional[str] = None
 
+class RollbackRequest(BaseModel):
+    target_version: str = Field(..., example="1.0.4")
+
 # Database dependency
 def get_db():
     db = SessionLocal()
@@ -221,6 +233,15 @@ def register_model(req: RegisterModelRequest, db: Session = Depends(get_db)):
         reference_data_path=req.reference_data_path
     )
     db.add(new_model)
+    
+    # Insert first version as champion in model version registry
+    init_version = DBModelVersion(
+        model_id=req.model_id,
+        version="1.0.0",
+        status="champion",
+        accuracy=0.85
+    )
+    db.add(init_version)
     db.commit()
     
     # Initialize metrics
@@ -243,6 +264,15 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, db: Session = De
             features_json=json.dumps([f"feat_{i}" for i in range(len(req.features))])
         )
         db.add(model)
+        
+        # Insert first version as champion in model version registry
+        init_version = DBModelVersion(
+            model_id=model_id,
+            version="1.0.0",
+            status="champion",
+            accuracy=0.85
+        )
+        db.add(init_version)
         db.commit()
 
     # Log prediction into Database
@@ -377,6 +407,105 @@ def get_model_details(model_id: str, db: Session = Depends(get_db)):
         "features": json.loads(model.features_json),
         "reference_data_path": model.reference_data_path,
         "created_at": model.created_at.isoformat()
+    }
+
+@app.get("/models/{model_id}/versions", summary="Get version history of a model")
+def get_model_versions(model_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieves the complete registered version history for a given model.
+    """
+    versions = db.query(DBModelVersion)\
+                 .filter(DBModelVersion.model_id == model_id)\
+                 .order_by(DBModelVersion.created_at.desc())\
+                 .all()
+    if not versions:
+        model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+        if model:
+            return [{"version": model.version, "status": "champion", "accuracy": model.accuracy}]
+        raise HTTPException(status_code=404, detail="Model not registered.")
+    return [{
+        "version": v.version,
+        "status": v.status,
+        "accuracy": v.accuracy
+    } for v in versions]
+
+@app.post("/models/{model_id}/rollback", summary="Rollback to a previous champion version")
+def rollback_model_version(model_id: str, req: RollbackRequest, db: Session = Depends(get_db)):
+    """
+    Emergency rollback target version to champion, archiving current champion.
+    """
+    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not registered.")
+        
+    # Locate target version in model registry
+    target_ver = db.query(DBModelVersion).filter(
+        DBModelVersion.model_id == model_id,
+        DBModelVersion.version == req.target_version
+    ).first()
+    
+    if not target_ver:
+        raise HTTPException(status_code=404, detail=f"Target version {req.target_version} not found in registry.")
+        
+    if target_ver.status == "champion":
+        raise HTTPException(status_code=400, detail=f"Target version {req.target_version} is already the current champion.")
+        
+    # Archive current champion
+    db.query(DBModelVersion).filter(
+        DBModelVersion.model_id == model_id,
+        DBModelVersion.status == "champion"
+    ).update({"status": "archived"})
+    
+    # Promote target version to champion
+    target_ver.status = "champion"
+    
+    # Update the primary model settings
+    old_version = model.version
+    old_accuracy = model.accuracy
+    
+    model.version = target_ver.version
+    model.accuracy = target_ver.accuracy
+    model.status = "healthy"
+    
+    # Write rollback/reversion audit entry
+    db.add(DBAuditLogEntry(
+        model_id=model_id,
+        event_type="rollback",
+        model_version=target_ver.version,
+        drift_score=0.0,
+        triggered_by="manual",
+        details_json=json.dumps({
+            "message": f"Emergency rollback initiated. Reverted model version from {old_version} to {target_ver.version}.",
+            "old_version": old_version,
+            "new_version": target_ver.version,
+            "old_accuracy": old_accuracy,
+            "new_accuracy": target_ver.accuracy
+        })
+    ))
+    
+    db.commit()
+    
+    # Update metrics
+    accuracy_gauge.labels(model_id=model_id, version=target_ver.version).set(target_ver.accuracy)
+    
+    send_alert(
+        event_type="rollback",
+        message=f"CRITICAL: Emergency rollback initiated for model '{model_id}'! Reverted from v{old_version} to v{target_ver.version}.",
+        details={
+            "model_id": model_id,
+            "old_version": old_version,
+            "new_version": target_ver.version,
+            "old_accuracy": f"{old_accuracy:.4f}",
+            "new_accuracy": f"{target_ver.accuracy:.4f}",
+            "action": "reverted_to_champion"
+        }
+    )
+    
+    return {
+        "status": "rolled_back",
+        "model_id": model_id,
+        "previous_version": old_version,
+        "current_version": target_ver.version
     }
 
 @app.get("/retraining/history/{model_id}", summary="Get retraining events timeline")
@@ -548,6 +677,21 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, db: Session 
         model.accuracy = req.new_accuracy
         model.version = req.new_version
 
+        # Archive old champion version in version registry
+        db.query(DBModelVersion).filter(
+            DBModelVersion.model_id == model_id,
+            DBModelVersion.status == "champion"
+        ).update({"status": "archived"})
+
+        # Insert new challenger version as champion
+        new_version_rec = DBModelVersion(
+            model_id=model_id,
+            version=req.new_version,
+            status="champion",
+            accuracy=req.new_accuracy
+        )
+        db.add(new_version_rec)
+
         if event:
             event.status = "completed"
             event.end_time = datetime.datetime.utcnow()
@@ -653,11 +797,11 @@ def calculate_evidently_drift_endpoint(req: EvidentlyCalculateRequest):
         cur_df = pd.DataFrame(req.current_data)
         
         # Avoid direct circular import, run Evidently local report
-        from sdk.drift_detector import EVIDENTLY_AVAILABLE
+        from driftguard.drift_detector import EVIDENTLY_AVAILABLE
         if not EVIDENTLY_AVAILABLE:
             raise HTTPException(status_code=500, detail="Evidently library not installed inside this container.")
             
-        from sdk.drift_detector import Report, DataDriftPreset, TargetDriftPreset
+        from driftguard.drift_detector import Report, DataDriftPreset, TargetDriftPreset
         metrics = [DataDriftPreset()]
         if req.target_column and req.target_column in ref_df.columns:
             metrics.append(TargetDriftPreset())
@@ -771,6 +915,21 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             model.status = "healthy"
             model.accuracy = new_acc
             model.version = new_ver
+            
+            # Archive old champion version in version registry
+            db.query(DBModelVersion).filter(
+                DBModelVersion.model_id == model_id,
+                DBModelVersion.status == "champion"
+            ).update({"status": "archived"})
+
+            # Insert new challenger version as champion
+            new_version_rec = DBModelVersion(
+                model_id=model_id,
+                version=new_ver,
+                status="champion",
+                accuracy=new_acc
+            )
+            db.add(new_version_rec)
             
             # Update Retraining Event
             event.status = "completed"

@@ -8,7 +8,7 @@ import subprocess
 import datetime
 from typing import Dict, Any, Optional
 
-from sdk.config import settings
+from driftguard.config import settings
 
 LINEAGE_FILE = os.path.join(settings.GOVERNANCE_REPORT_OUTPUT_DIR, "model_lineage.json")
 
