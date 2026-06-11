@@ -20,7 +20,6 @@ Through redirects of Uvicorn stdout/stderr to `uvicorn_scaling_server.log` and i
    - Subsequent manual requests to `/api/health` fail because the isolated server has been shut down by the test script.
 
 ---
-
 ## 2. Server Architecture Audit & Verification
 
 - **Process Existence**: The Uvicorn server process ran successfully as a child subprocess of the validation script and remained alive until the validation script killed it in its `finally` block.
