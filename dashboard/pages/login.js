@@ -272,28 +272,7 @@ export default function Login() {
                   </form>
                 )}
 
-                <div className="relative flex py-3 items-center">
-                  <div className="flex-grow border-t border-[#30363d]"></div>
-                  <span className="flex-shrink mx-4 text-[#7d8590] text-[10px] uppercase font-bold tracking-widest">or</span>
-                  <div className="flex-grow border-t border-[#30363d]"></div>
-                </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.removeItem("dg_mock_models");
-                    localStorage.removeItem("dg_mock_drift");
-                    localStorage.removeItem("dg_mock_retrain");
-                    localStorage.removeItem("dg_mock_versions");
-                    localStorage.removeItem("dg_mock_audit");
-                    localStorage.setItem("dg_api_key", "demo-key");
-                    toast.success("Welcome to Demo Mode! Using simulated telemetry datasets.");
-                    router.replace('/dashboard');
-                  }}
-                  className="w-full py-2.5 rounded-lg border border-[#30363d] hover:border-[#58a6ff] hover:text-[#58a6ff] hover:bg-[#21262d] text-[#e6edf3] text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer active:scale-95"
-                >
-                  <span>Explore with Demo Mode (Mock Data)</span>
-                </button>
               </div>
             </>
           )}

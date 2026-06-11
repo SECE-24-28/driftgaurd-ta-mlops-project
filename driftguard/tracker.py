@@ -2,6 +2,7 @@
 DriftGuard SDK model tracking interceptor.
 Provides the primary DriftGuard SDK client to wrap models and track real-time inputs, outputs, and concept drift.
 """
+import os
 import time
 import httpx
 import numpy as np
@@ -74,7 +75,12 @@ class DriftGuard:
                     resp = client.get(f"{self.api_url}/models/{self.model_id}", headers=headers)
                     if resp.status_code == 200:
                         version = resp.json().get("version", "1.0.0")
-                        file_path = f"artifacts/{self.project_id}/{self.model_id}/version_{version}.pkl"
+                        file_path = os.path.join(
+                            settings.ARTIFACT_ROOT,
+                            str(self.project_id),
+                            self.model_id,
+                            f"version_{version}.pkl"
+                        )
                         if os.path.exists(file_path):
                             self._champion_model = joblib.load(file_path)
                             logger.info(f"[{self.model_id}] Auto-restored champion model version {version} from {file_path}")
@@ -165,7 +171,6 @@ class DriftGuard:
         if self.project_id:
             try:
                 import joblib
-                import os
                 version = "1.0.0"
                 if self.api_key:
                     try:
@@ -176,9 +181,15 @@ class DriftGuard:
                                 version = resp.json().get("version", "1.0.0")
                     except Exception:
                         pass
-                dir_path = f"artifacts/{self.project_id}/{self.model_id}"
+                # Use absolute ARTIFACT_ROOT so artifacts are written to the same
+                # location regardless of the script's working directory.
+                dir_path = os.path.join(
+                    settings.ARTIFACT_ROOT,
+                    str(self.project_id),
+                    self.model_id
+                )
                 os.makedirs(dir_path, exist_ok=True)
-                file_path = f"{dir_path}/version_{version}.pkl"
+                file_path = os.path.join(dir_path, f"version_{version}.pkl")
                 joblib.dump(model, file_path)
                 logger.info(f"[{self.model_id}] Persisted champion model to {file_path}")
             except Exception as e:

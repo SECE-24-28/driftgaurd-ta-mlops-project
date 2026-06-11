@@ -838,3 +838,279 @@ I have completed the validation phase for the DriftGuard platform and verified i
 
 --------------------------------------------------------------------------------------------
 
+
+(base) PS C:\Users\Yugendra\Downloads\MLopsProject> cd validation  
+(base) PS C:\Users\Yugendra\Downloads\MLopsProject\validation> python validate_retraining_workflow.py
+=========================================================
+PHASE 1: Environment Setup
+=========================================================
+[Server] Starting isolated Uvicorn server on port 8099...
+Registering user: e2e-user-1781200563@driftguard.com
+Creating project: E2E Project
+Environment Setup Complete. user_id=5, project_id=5, model_id=e2e-model-1781200563
+
+=================================================
+PHASE 2: Champion Model Creation
+=================================================
+Training deliberately weak champion model...
+C:\Users\Yugendra\anaconda3\Lib\site-packages\sklearn\linear_model\_logistic.py:473: ConvergenceWarning: lbfgs failed to converge after 100 iteration(s) (status=1):
+STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT
+
+Increase the number of iterations to improve the convergence (max_iter=100).
+You might also want to scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+  n_iter_i = _check_optimize_result(
+Champion Accuracy on Validation Data: 0.9211
+Registering model e2e-model-1781200563 on server...
+Champion model registered. Initial version is 1.0.0.
+
+=================================================
+PHASE 3: Validation Dataset
+=================================================
+Validation sample count: 114
+
+=================================================
+PHASE 4: Retraining Callback
+=================================================
+Retraining callback registered.
+
+=================================================
+PHASE 5: Drift Generation
+=================================================
+Feeding drifted samples through wrapped model...
+[DriftGuard] CALLBACK THREAD STARTED
+Sample 000 | Global Drift Score: 0.9834 (Threshold: 0.50)
+Drift threshold exceeded on sample 0!
+[Callback Triggered]
+[Training Challenger]
+[Challenger Ready]. Accuracy: 0.9825
+
+===== VALIDATION RESULTS =====
+Champion: 0.9210526315789473
+Challenger: 0.9824561403508771
+Passed: True
+==============================
+
+PROMOTION STAGE STARTED
+NEW VERSION = 1.0.1
+PERSISTED CHALLENGER MODEL TO artifacts/5/e2e-model-1781200563/version_1.0.1.pkl
+POSTING COMPLETION EVENT
+COMPLETION EVENT POSTED
+CHAMPION UPDATED
+[PASS] Retraining trigger fired.
+
+=================================================
+PHASE 6: Retraining Verification
+=================================================
+Waiting for retraining callback execution...
+Attempt 1/15: Model version=1.0.1, Model status=healthy
+Retraining status: completed
+Callback executed: PASS
+Retraining Event Status Completed: PASS
+
+=================================================
+PHASE 7: Champion vs Challenger Validation
+=================================================
+Old accuracy (Champion): 0.9211
+New accuracy (Challenger): 0.9825
+Improvement: 0.0614
+Validation decision (Challenger > Champion): PASS
+
+=================================================
+PHASE 8: Promotion Verification
+=================================================
+Promotion: Active version updated on server is 1.0.1: PASS
+
+=================================================
+PHASE 9: Audit Verification
+=================================================
+Audit entries types: ['model_promoted', 'drift_detected']
+Audit events (drift_detected & model_promoted): PASS
+
+=================================================
+PHASE 10: Rollback Verification
+=================================================
+Executing rollback to version 1.0.0...
+Rollback Verification: FAIL (status_code: 404, body: {"detail":"Rollback failed: Model artifact file for version 1.0.0 not found on disk at artifacts/5/e2e-model-1781200563/version_1.0.0.pkl."})
+
+=================================================
+PHASE 11: Direct Database Verification
+=================================================
+Shutting down DriftGuard SDK tracking...
+Connecting directly to database: C:\Users\Yugendra\Downloads\MLopsProject\driftguard_metadata.db
+   - Model row exists: model_id=e2e-model-1781200563, version=1.0.1, status=healthy
+   - Model versions history in DB:
+     * version=1.0.0, status=archived, accuracy=0.85
+     * version=1.0.1, status=champion, accuracy=0.9824561403508771
+   - Version history contains expected records: PASS
+   - Retraining history in DB:
+     * id=4, status=completed, old_version=1.0.0, new_version=1.0.1
+   - Retraining history contains expected record: PASS
+   - Audit log entries in DB:
+     * event_type=drift_detected, model_version=1.0.0, triggered_by=automatic
+     * event_type=model_promoted, model_version=1.0.1, triggered_by=automatic
+   - [FAIL] Audit logs missing required events.
+   - [FAIL] Current version after rollback is 1.0.1 (Expected: 1.0.0)
+Direct Database Verification: FAIL
+
+[Server] Shutting down isolated Uvicorn server...
+
+Saved report to project root: C:\Users\Yugendra\Downloads\MLopsProject\validation_report_retraining_workflow.md        
+Saved report to brain artifacts: C:\Users\Yugendra\.gemini\antigravity-ide\brain\813ab6b8-1360-46cc-bd42-9f9a475708c8\validation_report_retraining_workflow.md
+
+=================================================
+SUCCESS CRITERIA
+=================================================
+Drift Detected          PASS
+Retraining Triggered    PASS
+Callback Executed       PASS
+Validation Passed       PASS
+Promotion Completed     PASS
+Version Incremented     PASS
+Audit Logged            PASS
+Rollback Completed      FAIL
+Database Verified       FAIL
+=================================================
+FINAL RESULT:
+FAIL
+(base) PS C:\Users\Yugendra\Downloads\MLopsProject\validation> python validate_retraining_workflow.py
+=========================================================
+PHASE 1: Environment Setup
+=========================================================
+[Server] Starting isolated Uvicorn server on port 8099...
+Registering user: e2e-user-1781201544@driftguard.com
+Creating project: E2E Project
+Environment Setup Complete. user_id=7, project_id=7, model_id=e2e-model-1781201544
+
+=================================================
+PHASE 2: Champion Model Creation
+=================================================
+Training deliberately weak champion model...
+C:\Users\Yugendra\anaconda3\Lib\site-packages\sklearn\linear_model\_logistic.py:473: ConvergenceWarning: lbfgs failed to converge after 100 iteration(s) (status=1):
+STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT
+
+Increase the number of iterations to improve the convergence (max_iter=100).
+You might also want to scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+  n_iter_i = _check_optimize_result(
+Champion Accuracy on Validation Data: 0.9211
+Registering model e2e-model-1781201544 on server...
+Champion model registered. Initial version is 1.0.0.
+
+=================================================
+PHASE 3: Validation Dataset
+=================================================
+Validation sample count: 114
+
+=================================================
+PHASE 4: Retraining Callback
+=================================================
+Retraining callback registered.
+
+=================================================
+PHASE 5: Drift Generation
+=================================================
+Feeding drifted samples through wrapped model...
+[DriftGuard] CALLBACK THREAD STARTED
+Sample 000 | Global Drift Score: 0.9834 (Threshold: 0.50)
+Drift threshold exceeded on sample 0!
+[Callback Triggered]
+[Training Challenger]
+[Challenger Ready]. Accuracy: 0.9825
+
+===== VALIDATION RESULTS =====
+Champion: 0.9210526315789473
+Challenger: 0.9824561403508771
+Passed: True
+==============================
+
+PROMOTION STAGE STARTED
+NEW VERSION = 1.0.1
+PERSISTED CHALLENGER MODEL TO C:\Users\Yugendra\Downloads\MLopsProject\artifacts\7\e2e-model-1781201544\version_1.0.1.pkl
+POSTING COMPLETION EVENT
+COMPLETION EVENT POSTED
+CHAMPION UPDATED
+[PASS] Retraining trigger fired.
+
+=================================================
+PHASE 6: Retraining Verification
+=================================================
+Waiting for retraining callback execution...
+Attempt 1/15: Model version=1.0.1, Model status=healthy
+Retraining status: completed
+Callback executed: PASS
+Retraining Event Status Completed: PASS
+
+=================================================
+PHASE 7: Champion vs Challenger Validation
+=================================================
+Old accuracy (Champion): 0.9211
+New accuracy (Challenger): 0.9825
+Improvement: 0.0614
+Validation decision (Challenger > Champion): PASS
+
+=================================================
+PHASE 8: Promotion Verification
+=================================================
+Promotion: Active version updated on server is 1.0.1: PASS
+
+=================================================
+PHASE 9: Audit Verification
+=================================================
+Audit entries types: ['model_promoted', 'drift_detected']
+Audit events (drift_detected & model_promoted): PASS
+
+=================================================
+PHASE 10: Rollback Verification
+=================================================
+Executing rollback to version 1.0.0...
+Rollback successful. Version returned to 1.0.0.
+Rollback Verification: PASS
+
+=================================================
+PHASE 11: Direct Database Verification
+=================================================
+Shutting down DriftGuard SDK tracking...
+Connecting directly to database: C:\Users\Yugendra\Downloads\MLopsProject\driftguard_metadata.db
+   - Model row exists: model_id=e2e-model-1781201544, version=1.0.0, status=healthy
+   - Model versions history in DB:
+     * version=1.0.0, status=champion, accuracy=0.85
+     * version=1.0.1, status=archived, accuracy=0.9824561403508771
+   - Version history contains expected records: PASS
+   - Retraining history in DB:
+     * id=6, status=completed, old_version=1.0.0, new_version=1.0.1
+   - Retraining history contains expected record: PASS
+   - Audit log entries in DB:
+     * event_type=drift_detected, model_version=1.0.0, triggered_by=automatic
+     * event_type=model_promoted, model_version=1.0.1, triggered_by=automatic
+     * event_type=rollback, model_version=1.0.0, triggered_by=manual
+   - Audit logs contain expected events: PASS
+   - Current version after rollback is 1.0.0: PASS
+Direct Database Verification: PASS
+
+[Server] Shutting down isolated Uvicorn server...
+
+Saved report to project root: C:\Users\Yugendra\Downloads\MLopsProject\validation_report_retraining_workflow.md        
+Saved report to brain artifacts: C:\Users\Yugendra\.gemini\antigravity-ide\brain\813ab6b8-1360-46cc-bd42-9f9a475708c8\validation_report_retraining_workflow.md
+
+=================================================
+SUCCESS CRITERIA
+=================================================
+Drift Detected          PASS
+Retraining Triggered    PASS
+Callback Executed       PASS
+Validation Passed       PASS
+Promotion Completed     PASS
+Version Incremented     PASS
+Audit Logged            PASS
+Rollback Completed      PASS
+Database Verified       PASS
+=================================================
+FINAL RESULT:
+PASS
+
+--------------------------------------------------------------------------------

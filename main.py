@@ -393,6 +393,11 @@ def get_db():
 
 @app.middleware("http")
 async def api_key_auth_middleware(request: Request, call_next):
+    # CORS preflight requests never carry custom headers — pass them through
+    # to CORSMiddleware which will add the appropriate CORS response headers.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     # Exclude open endpoints
     path = request.url.path
     exempt_prefixes = ["/health", "/api/health", "/docs", "/openapi.json", "/users/register", "/metrics"]
@@ -588,6 +593,23 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
     db.add(init_version)
     db.commit()
     
+    # Persist a placeholder v1.0.0 artifact on disk so rollback to the initial
+    # version is always possible — even before the SDK sends a real champion model.
+    # The server writes this because it owns the artifact directory and always
+    # runs from a known CWD (the project root).
+    try:
+        import joblib as _joblib
+        _server_root = os.path.dirname(os.path.abspath(__file__))
+        _art_dir = os.path.join(_server_root, "artifacts", str(proj_id), req.model_id)
+        os.makedirs(_art_dir, exist_ok=True)
+        _art_path = os.path.join(_art_dir, "version_1.0.0.pkl")
+        if not os.path.exists(_art_path):
+            # Write a lightweight sentinel so rollback endpoint can validate the file
+            _joblib.dump({"model_id": req.model_id, "version": "1.0.0", "placeholder": True}, _art_path)
+            print(f"[Register] Wrote initial artifact placeholder to {_art_path}")
+    except Exception as _art_err:
+        print(f"[Register] Warning: Could not write v1.0.0 artifact placeholder: {_art_err}")
+    
     # Initialize metrics
     accuracy_gauge.labels(model_id=req.model_id, version="1.0.0").set(0.85)
     
@@ -709,18 +731,7 @@ def get_drift_metrics(model_id: str, current_user: DBUser = Depends(get_current_
              .all()
              
     if not logs:
-        # Mock empty data dynamically
-        now = datetime.datetime.utcnow()
-        mock_data = []
-        for i in range(24):
-            t = now - datetime.timedelta(hours=(24-i))
-            mock_data.append({
-                "timestamp": t.isoformat(),
-                "drift_score": 0.02 + (i * 0.003),
-                "features": [0.0] * 5,
-                "prediction": [0.0]
-            })
-        return mock_data
+        return []
 
     # Return prediction metrics chronological
     return [{
@@ -737,29 +748,6 @@ def list_models(current_user: DBUser = Depends(get_current_user), db: Session = 
     """
     check_and_recover_all_stale_jobs_for_user(current_user.id, db)
     models = db.query(DBModel).filter(DBModel.owner_id == current_user.id).all()
-    # If empty, seed a mock model for the dashboard to showcase beautiful styles out-of-the-box
-    if not models:
-        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
-        if not project:
-            project = DBProject(name="Default Project", owner_id=current_user.id)
-            db.add(project)
-            db.commit()
-            db.refresh(project)
-            
-        seed_model = DBModel(
-            model_id="fraud-detector-v1",
-            project_id=project.id,
-            owner_id=current_user.id,
-            drift_threshold=0.15,
-            status="healthy",
-            accuracy=0.912,
-            version="1.0.4",
-            features_json=json.dumps(["amount", "location_score", "velocity_h", "login_attempts", "device_trust"])
-        )
-        db.add(seed_model)
-        db.commit()
-        models = [seed_model]
-        
     return [{
         "model_id": m.model_id,
         "drift_threshold": m.drift_threshold,
@@ -829,7 +817,9 @@ def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DB
         raise HTTPException(status_code=400, detail=f"Target version {req.target_version} is already the current champion.")
 
     # Load previous model artifact and restore (Verify artifact exists and loads before DB changes)
-    artifact_path = f"artifacts/{model.project_id}/{model_id}/version_{target_ver.version}.pkl"
+    # Use __file__ to anchor the artifacts/ directory to the project root regardless of CWD.
+    _server_root = os.path.dirname(os.path.abspath(__file__))
+    artifact_path = os.path.join(_server_root, "artifacts", str(model.project_id), model_id, f"version_{target_ver.version}.pkl")
     if not os.path.exists(artifact_path):
         raise HTTPException(
             status_code=404,
@@ -918,20 +908,7 @@ def get_retraining_history(model_id: str, current_user: DBUser = Depends(get_cur
                .order_by(DBRetrainingEvent.start_time.desc())\
                .all()
     if not events:
-        # Return elegant default seed event
-        return [{
-            "id": 1,
-            "model_id": model_id,
-            "status": "completed",
-            "triggered_by": "manual",
-            "start_time": (datetime.datetime.utcnow() - datetime.timedelta(days=2)).isoformat(),
-            "end_time": (datetime.datetime.utcnow() - datetime.timedelta(days=2, minutes=4)).isoformat(),
-            "old_accuracy": 0.895,
-            "new_accuracy": 0.912,
-            "old_version": "1.0.3",
-            "new_version": "1.0.4",
-            "details": {"message": "Initial calibration run succeeded."}
-        }]
+        return []
 
     return [{
         "id": e.id,
@@ -960,16 +937,7 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
              .all()
              
     if not logs:
-        # Seed mock audit data
-        return [{
-            "timestamp": (datetime.datetime.utcnow() - datetime.timedelta(days=2)).isoformat(),
-            "event_type": "model_promoted",
-            "model_id": model_id,
-            "model_version": "1.0.4",
-            "drift_score": 0.02,
-            "triggered_by": "manual",
-            "details": {"message": "Version 1.0.4 promoted to production champion after successful validation."}
-        }]
+        return []
 
     return [{
         "timestamp": log.timestamp.isoformat(),

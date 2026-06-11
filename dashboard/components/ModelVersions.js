@@ -35,7 +35,7 @@ export default function ModelVersions({ versions, onRollback }) {
               return (
                 <tr key={index} className="hover:bg-[#21262d]/20 transition-colors">
                   <td className="px-4 py-3 font-semibold text-[#e6edf3]">
-                    v{v.version}
+                    {v.version !== null && v.version !== undefined ? `v${v.version}` : 'N/A'}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase border ${getStatusColor(v.status)}`}>
@@ -43,7 +43,7 @@ export default function ModelVersions({ versions, onRollback }) {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-[#e6edf3] font-mono">
-                    {formatPercent(v.accuracy)}
+                    {v.accuracy !== null && v.accuracy !== undefined ? formatPercent(v.accuracy) : 'N/A'}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {isArchived ? (
