@@ -8,6 +8,8 @@ import numpy as np
 import logging
 from typing import Any, Callable, Dict, List, Optional, Union
 import threading
+import queue
+import atexit
 
 from driftguard.config import settings
 from driftguard.drift_detector import ADWINDriftDetector
@@ -78,6 +80,17 @@ class DriftGuard:
                             logger.info(f"[{self.model_id}] Auto-restored champion model version {version} from {file_path}")
             except Exception as e:
                 logger.debug(f"[{self.model_id}] Could not auto-restore champion model: {e}")
+
+        # Telemetry Queue & Worker setup
+        self._telemetry_queue = queue.Queue(maxsize=15000)
+        self._telemetry_stop_event = threading.Event()
+        self._telemetry_worker = threading.Thread(
+            target=self._telemetry_worker_loop,
+            daemon=True,
+            name=f"driftguard-telemetry-worker-{self.model_id}"
+        )
+        self._telemetry_worker.start()
+        atexit.register(self._shutdown_telemetry_worker)
 
         logger.info(f"Initialized DriftGuard SDK for model '{model_id}' against API: {self.api_url}")
 
@@ -188,37 +201,82 @@ class DriftGuard:
 
     def _send_telemetry_async(self, features: list, prediction: list, drift_score: float):
         """
-        Internal helper to send model inputs/predictions to DriftGuard API asynchronously.
+        Puts telemetry payload onto the queue for asynchronous logging.
+        Drops data under queue overflow to prevent latency spikes in the prediction loop.
         """
-        def send():
-            try:
-                # Fire and forget POST request to DriftGuard backend
-                url = f"{self.api_url}/predict/{self.model_id}"
-                payload = {
-                    "features": features,
-                    "prediction": prediction,
-                    "drift_score": drift_score
-                }
-                # Print payload and endpoint details for tracing
-                print(f"[DriftGuard SDK] POSTing telemetry to {url}")
-                print(f"[DriftGuard SDK] Payload: {payload}")
-                headers = {"X-API-Key": self.api_key} if self.api_key else {}
-                with httpx.Client(timeout=2.0) as client:
-                    resp = client.post(url, json=payload, headers=headers)
-                    if resp.status_code == 200:
-                        logger.debug("Successfully logged prediction telemetry to DriftGuard API")
-                        print("[DriftGuard SDK] Telemetry logged successfully.")
-                    else:
-                        import sys
-                        print(f"[DriftGuard SDK] Telemetry failed: API returned {resp.status_code}", file=sys.stderr)
-                        logger.warning(f"Failed to log prediction: API returned {resp.status_code}")
-            except Exception as e:
-                import sys
-                print(f"[DriftGuard SDK] Telemetry connection error: {e}", file=sys.stderr)
-                logger.warning(f"DriftGuard API telemetry connection bypassed/failed: {e}")
+        payload = {
+            "features": features,
+            "prediction": prediction,
+            "drift_score": drift_score
+        }
+        try:
+            self._telemetry_queue.put_nowait(payload)
+        except queue.Full:
+            import sys
+            print(f"[DriftGuard SDK] Telemetry queue full. Dropping payload to prevent model latency spike.", file=sys.stderr)
+            logger.warning(
+                f"[{self.model_id}] Telemetry queue full. "
+                "Dropping telemetry payload to prevent model prediction latency spike."
+            )
 
-        thread = threading.Thread(target=send, daemon=True)
-        thread.start()
+    def _telemetry_worker_loop(self):
+        """
+        Dedicated telemetry consumer worker.
+        Uses a single persistent HTTP client connection pool for TCP socket reuse.
+        """
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        url = f"{self.api_url}/predict/{self.model_id}"
+        
+        client = httpx.Client(timeout=5.0)
+        try:
+            while not self._telemetry_stop_event.is_set() or not self._telemetry_queue.empty():
+                try:
+                    # Fetch next payload; short timeout so we check stop_event periodically
+                    payload = self._telemetry_queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                
+                # Attempt to upload telemetry with retry logic
+                success = False
+                for attempt in range(5):
+                    try:
+                        resp = client.post(url, json=payload, headers=headers)
+                        if resp.status_code == 200:
+                            success = True
+                            break
+                        elif resp.status_code == 401:
+                            print(f"[DriftGuard SDK] Telemetry failed: 401 Unauthorized")
+                            break
+                        else:
+                            print(f"[DriftGuard SDK] Telemetry upload failed (HTTP {resp.status_code}). Attempt {attempt + 1}/5")
+                    except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.WriteError, httpx.ReadError) as err:
+                        print(f"[DriftGuard SDK] Telemetry connection error: {err}. Recreating connection pool. Attempt {attempt + 1}/5")
+                        try:
+                            client.close()
+                        except Exception:
+                            pass
+                        client = httpx.Client(timeout=5.0)
+                    except Exception as err:
+                        print(f"[DriftGuard SDK] Telemetry error: {err}. Attempt {attempt + 1}/5")
+                    time.sleep(0.05 * (attempt + 1))  # exponential backoff
+                
+                self._telemetry_queue.task_done()
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def _shutdown_telemetry_worker(self):
+        """
+        Graceful shutdown hook. Set stop event and flush remaining queue items.
+        """
+        logger.info(f"[{self.model_id}] Shutting down telemetry worker gracefully...")
+        self._telemetry_stop_event.set()
+        # Wait up to 5 seconds for queue to drain
+        t0 = time.time()
+        while not self._telemetry_queue.empty() and (time.time() - t0) < 5.0:
+            time.sleep(0.1)
 
     def _trigger_retraining_async(self, current_drift_score: float) -> None:
         """
