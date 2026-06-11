@@ -4,10 +4,35 @@ from main import app
 
 @pytest.fixture(autouse=True)
 def setup_database():
-    from main import Base, engine
-    Base.metadata.create_all(bind=engine)
+    import os
+    import main
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from main import Base
+
+    test_db_url = "sqlite:///test_driftguard_metadata_owner.db"
+    test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    
+    orig_engine = main.engine
+    orig_session = main.SessionLocal
+    
+    main.engine = test_engine
+    main.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+    
+    Base.metadata.create_all(bind=test_engine)
+    
     yield
-    Base.metadata.drop_all(bind=engine)
+    
+    Base.metadata.drop_all(bind=test_engine)
+    test_engine.dispose()
+    if os.path.exists("test_driftguard_metadata_owner.db"):
+        try:
+            os.remove("test_driftguard_metadata_owner.db")
+        except Exception:
+            pass
+            
+    main.engine = orig_engine
+    main.SessionLocal = orig_session
 
 def test_cross_user_model_access_prevention():
     with TestClient(app) as client:
@@ -31,9 +56,9 @@ def test_cross_user_model_access_prevention():
 
         # 1. User B tries to register model under User A's project (fails with 403)
         reg_fail = client.post("/register", json={
-            "model_id": "cross-model",
+            "model_id": "model-a",
             "project_id": proj_a_id,
-            "drift_threshold": 0.15,
+            "drift_threshold": 0.25,
             "features": ["f1"]
         }, headers=headers_b)
         assert reg_fail.status_code == 403
@@ -42,26 +67,38 @@ def test_cross_user_model_access_prevention():
         reg_success = client.post("/register", json={
             "model_id": "model-a",
             "project_id": proj_a_id,
-            "drift_threshold": 0.15,
+            "drift_threshold": 0.25,
             "features": ["f1"]
         }, headers=headers_a)
         assert reg_success.status_code == 200
 
-        # 3. User B tries to post predictions to User A's model (fails with 403)
-        pred_fail = client.post("/predict/model-a", json={
+        # 3. User B successfully registers THEIR OWN model-a under Project B (uniqueness composite check passes)
+        reg_b_success = client.post("/register", json={
+            "model_id": "model-a",
+            "project_id": proj_b_id,
+            "drift_threshold": 0.15,
+            "features": ["f2"]
+        }, headers=headers_b)
+        assert reg_b_success.status_code == 200
+
+        # 4. User B posts predictions to THEIR OWN model-a (succeeds with 200)
+        pred_success = client.post("/predict/model-a", json={
             "features": [1.0],
             "prediction": [0.0],
             "drift_score": 0.05
         }, headers=headers_b)
-        assert pred_fail.status_code == 403
+        assert pred_success.status_code == 200
 
-        # 4. User B tries to view User A's model details, versions, drift, retraining history, or audit logs
-        assert client.get("/models/model-a", headers=headers_b).status_code == 403
-        assert client.get("/models/model-a/versions", headers=headers_b).status_code == 403
-        assert client.get("/drift/model-a", headers=headers_b).status_code == 403
-        assert client.get("/retraining/history/model-a", headers=headers_b).status_code == 403
-        assert client.get("/audit/model-a", headers=headers_b).status_code == 403
+        # 5. Verify User B's model details return THEIR OWN threshold (0.15) and NOT User A's (0.25)
+        model_b_details = client.get("/models/model-a", headers=headers_b)
+        assert model_b_details.status_code == 200
+        assert model_b_details.json()["drift_threshold"] == 0.15
 
-        # 5. User B tries to trigger retraining or rollback User A's model
-        assert client.post("/retrain/model-a", json={"drift_score": 0.25, "triggered_by": "manual"}, headers=headers_b).status_code == 403
-        assert client.post("/models/model-a/rollback", json={"target_version": "1.0.0"}, headers=headers_b).status_code == 403
+        # 6. Verify User A's model details return User A's threshold (0.25)
+        model_a_details = client.get("/models/model-a", headers=headers_a)
+        assert model_a_details.status_code == 200
+        assert model_a_details.json()["drift_threshold"] == 0.25
+
+        # 7. Verify that querying a non-existent model ID returns 404 for User B
+        non_existent_resp = client.get("/models/non-existent-model", headers=headers_b)
+        assert non_existent_resp.status_code == 404

@@ -31,41 +31,61 @@ def client():
     """
     Provides a FastAPI test client wrapping the primary platform main application.
     """
-    # Force sqlite tables setup for isolated testing
-    Base.metadata.create_all(bind=engine)
+    import os
+    import main
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    test_db_url = "sqlite:///test_driftguard_metadata_global.db"
+    test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    
+    orig_engine = main.engine
+    orig_session = main.SessionLocal
+    
+    main.engine = test_engine
+    main.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+    
+    Base.metadata.create_all(bind=test_engine)
     
     # Seed default user and project
     from main import DBUser, DBProject
     import hashlib
-    db = SessionLocal()
+    db = main.SessionLocal()
     try:
         default_key = "dg-default-key"
         hash_val = hashlib.sha256(default_key.encode("utf-8")).hexdigest()
-        user = db.query(DBUser).filter(DBUser.api_key_hash == hash_val).first()
-        if not user:
-            user = DBUser(
-                email="admin@driftguard.com",
-                name="Default Admin",
-                api_key_hash=hash_val,
-                is_active=True
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            
-            project = DBProject(
-                name="Default Project",
-                owner_id=user.id
-            )
-            db.add(project)
-            db.commit()
+        user = DBUser(
+            email="admin@driftguard.com",
+            name="Default Admin",
+            api_key_hash=hash_val,
+            is_active=True
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        project = DBProject(
+            name="Default Project",
+            owner_id=user.id
+        )
+        db.add(project)
+        db.commit()
     finally:
         db.close()
         
     with TestClient(app, headers={"X-API-Key": "dg-default-key"}) as test_client:
         yield test_client
-    # Clean up tables
-    Base.metadata.drop_all(bind=engine)
+        
+    Base.metadata.drop_all(bind=test_engine)
+    test_engine.dispose()
+    if os.path.exists("test_driftguard_metadata_global.db"):
+        try:
+            os.remove("test_driftguard_metadata_global.db")
+        except Exception:
+            pass
+            
+    main.engine = orig_engine
+    main.SessionLocal = orig_session
 
 @pytest.fixture
 def temp_audit_dir(tmp_path):

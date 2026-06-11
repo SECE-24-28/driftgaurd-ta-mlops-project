@@ -4,10 +4,35 @@ from main import app
 
 @pytest.fixture(autouse=True)
 def setup_database():
-    from main import Base, engine
-    Base.metadata.create_all(bind=engine)
+    import os
+    import main
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from main import Base
+
+    test_db_url = "sqlite:///test_driftguard_metadata_project.db"
+    test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    
+    orig_engine = main.engine
+    orig_session = main.SessionLocal
+    
+    main.engine = test_engine
+    main.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+    
+    Base.metadata.create_all(bind=test_engine)
+    
     yield
-    Base.metadata.drop_all(bind=engine)
+    
+    Base.metadata.drop_all(bind=test_engine)
+    test_engine.dispose()
+    if os.path.exists("test_driftguard_metadata_project.db"):
+        try:
+            os.remove("test_driftguard_metadata_project.db")
+        except Exception:
+            pass
+            
+    main.engine = orig_engine
+    main.SessionLocal = orig_session
 
 def test_project_crud_and_isolation():
     with TestClient(app) as client:

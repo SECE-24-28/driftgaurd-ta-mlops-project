@@ -1,6 +1,10 @@
 import pytest
 from main import DBModel, DBModelVersion, DBAuditLogEntry
 
+class DummyModel:
+    def predict(self, X):
+        return [0.0]
+
 def test_model_registry_flow(client):
     model_id = "registry-test-model"
     
@@ -72,6 +76,12 @@ def test_model_registry_flow(client):
     assert "not found in registry" in rollback_nonexist.json()["detail"]
 
     # 5. Test Successful Rollback to 1.0.0
+    import os
+    import joblib
+    dir_path = f"artifacts/1/{model_id}"
+    os.makedirs(dir_path, exist_ok=True)
+    joblib.dump(DummyModel(), f"{dir_path}/version_1.0.0.pkl")
+
     rollback_success = client.post(f"/models/{model_id}/rollback", json={
         "target_version": "1.0.0"
     })

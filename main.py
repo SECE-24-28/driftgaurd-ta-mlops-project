@@ -30,11 +30,13 @@ if settings.MLFLOW_TRACKING_URI.startswith("sqlite:///"):
 # ----------------------------------------------------
 # DATABASE SETUP (SQLite fallback / Postgres)
 # ----------------------------------------------------
+from sqlalchemy.pool import NullPool
+
 db_url = f"postgresql://{os.getenv('POSTGRES_USER', 'driftguard')}:{os.getenv('POSTGRES_PASSWORD', 'driftguard')}@{os.getenv('POSTGRES_HOST', 'localhost')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'driftguard')}"
 
 # Use SQLite for easy local execution if Postgres is unavailable
 try:
-    engine = create_engine(db_url, connect_args={"connect_timeout": 2})
+    engine = create_engine(db_url, connect_args={"connect_timeout": 2}, pool_size=50, max_overflow=100)
     # Force test connection
     with engine.connect() as conn:
         pass
@@ -42,7 +44,7 @@ try:
 except Exception:
     local_db_path = os.path.abspath("driftguard_metadata.db")
     db_url = f"sqlite:///{local_db_path}"
-    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    engine = create_engine(db_url, connect_args={"check_same_thread": False}, poolclass=NullPool)
     print(f"DriftGuard connected to Local SQLite Database at: {local_db_path}")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -78,7 +80,7 @@ class DBProject(Base):
 class DBModel(Base):
     __tablename__ = "dg_models"
     model_id = Column(String(100), primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("dg_projects.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("dg_projects.id"), primary_key=True)
     owner_id = Column(Integer, ForeignKey("dg_users.id"), nullable=True)
     drift_threshold = Column(Float, default=0.15)
     status = Column(String(50), default="healthy") # healthy, degraded, retraining
@@ -97,6 +99,7 @@ DBModelMetadata = DBModel
 class DBPredictionLog(Base):
     __tablename__ = "dg_predictions"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_id = Column(Integer, default=1)
     model_id = Column(String(100), index=True)
     features_json = Column(Text)
     prediction_json = Column(Text)
@@ -106,11 +109,13 @@ class DBPredictionLog(Base):
 class DBRetrainingEvent(Base):
     __tablename__ = "dg_retraining_events"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_id = Column(Integer, default=1)
     model_id = Column(String(100), index=True)
     status = Column(String(50)) # running, completed, failed
     triggered_by = Column(String(50)) # automatic, manual
     start_time = Column(DateTime, default=datetime.datetime.utcnow)
     end_time = Column(DateTime, nullable=True)
+    last_heartbeat = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
     old_accuracy = Column(Float)
     new_accuracy = Column(Float, nullable=True)
     old_version = Column(String(50))
@@ -120,6 +125,7 @@ class DBRetrainingEvent(Base):
 class DBAuditLogEntry(Base):
     __tablename__ = "dg_audit_logs"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_id = Column(Integer, default=1)
     model_id = Column(String(100), index=True)
     event_type = Column(String(100)) # drift_detected, retrain_triggered, model_promoted, rollback
     model_version = Column(String(50))
@@ -131,34 +137,74 @@ class DBAuditLogEntry(Base):
 class DBModelVersion(Base):
     __tablename__ = "dg_model_versions"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    project_id = Column(Integer, default=1)
     model_id = Column(String(100), index=True)
     version = Column(String(50), index=True)
     status = Column(String(50))  # champion, candidate, archived, rolled_back
     accuracy = Column(Float)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-
-# Auto migration for existing databases
+# ----------------------------------------------------
+# DATABASE MIGRATION AND STARTUP INIT
+# ----------------------------------------------------
 try:
     from sqlalchemy import inspect, text
     inspector = inspect(engine)
-    columns = [c["name"] for c in inspector.get_columns("dg_models")]
+    
+    # 1. Inspect existing dg_models table to see if it needs composite primary key migration
+    has_models_table = inspector.has_table("dg_models")
+    needs_composite_migration = False
+    
+    if has_models_table:
+        pk_constraint = inspector.get_pk_constraint("dg_models")
+        pk_cols = pk_constraint.get("constrained_columns", [])
+        if len(pk_cols) == 1 and "project_id" not in pk_cols:
+            needs_composite_migration = True
+    with engine.begin() as conn:
+        # 2. If dg_models has single-column PK, rename it so Base.metadata.create_all creates the new composite key version
+        if needs_composite_migration:
+            print("[Migration] Renaming old single-key dg_models to dg_models_old for composite key migration...")
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS ix_dg_models_model_id;"))
+            except Exception as index_err:
+                print(f"[Migration] Warning dropping index: {index_err}")
+            conn.execute(text("ALTER TABLE dg_models RENAME TO dg_models_old;"))
+            
+    # 3. Create all tables (will create new dg_models and create new tables if missing)
+    Base.metadata.create_all(bind=engine)
     
     with engine.begin() as conn:
-        if "project_id" not in columns:
-            conn.execute(text("ALTER TABLE dg_models ADD COLUMN project_id INTEGER;"))
-        if "owner_id" not in columns:
-            conn.execute(text("ALTER TABLE dg_models ADD COLUMN owner_id INTEGER;"))
+        # 4. If we renamed old dg_models, copy over the data to the newly created composite-key version
+        if needs_composite_migration:
+            print("[Migration] Copying data from dg_models_old to dg_models composite-key table...")
+            conn.execute(text("""
+                INSERT INTO dg_models (model_id, project_id, owner_id, drift_threshold, status, accuracy, version, features_json, reference_data_path, created_at)
+                SELECT model_id, COALESCE(project_id, 1), owner_id, drift_threshold, status, accuracy, version, features_json, reference_data_path, created_at
+                FROM dg_models_old;
+            """))
+            conn.execute(text("DROP TABLE dg_models_old;"))
+            print("[Migration] dg_models composite key migration completed successfully.")
             
-    # Now verify if we need to seed default user/project for existing rows
+        # 5. Check and append project_id / last_heartbeat columns for event log tables
+        for table_name in ["dg_predictions", "dg_retraining_events", "dg_audit_logs", "dg_model_versions"]:
+            if inspector.has_table(table_name):
+                cols = [c["name"] for c in inspector.get_columns(table_name)]
+                if "project_id" not in cols:
+                    print(f"[Migration] Adding project_id column to {table_name}...")
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN project_id INTEGER DEFAULT 1;"))
+                    
+        # 6. Add last_heartbeat column to dg_retraining_events
+        if inspector.has_table("dg_retraining_events"):
+            cols = [c["name"] for c in inspector.get_columns("dg_retraining_events")]
+            if "last_heartbeat" not in cols:
+                print("[Migration] Adding last_heartbeat column to dg_retraining_events...")
+                conn.execute(text("ALTER TABLE dg_retraining_events ADD COLUMN last_heartbeat TIMESTAMP;"))
+                
+    # 7. Seed default user and project if missing
     db = SessionLocal()
     try:
-        # Check if we have users, if not create a default user
         default_user = db.query(DBUser).filter(DBUser.email == "admin@driftguard.com").first()
         if not default_user:
-            import hashlib
             default_key = "dg-default-key"
             hash_val = hashlib.sha256(default_key.encode("utf-8")).hexdigest()
             default_user = DBUser(
@@ -172,7 +218,6 @@ try:
             db.refresh(default_user)
             print(f"Created default user with API key: {default_key}")
             
-        # Check if we have projects, if not create default project
         default_project = db.query(DBProject).filter(DBProject.owner_id == default_user.id).first()
         if not default_project:
             default_project = DBProject(
@@ -183,7 +228,7 @@ try:
             db.commit()
             db.refresh(default_project)
             
-        # Update any model that has null project_id or owner_id
+        # Migrate any models with null project_id/owner_id
         null_models = db.query(DBModel).filter((DBModel.project_id == None) | (DBModel.owner_id == None)).all()
         for m in null_models:
             m.project_id = default_project.id
@@ -191,6 +236,7 @@ try:
         if null_models:
             db.commit()
             print(f"Migrated {len(null_models)} existing models to Default Project.")
+            
     finally:
         db.close()
 except Exception as e:
@@ -455,11 +501,8 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
         if not project:
             raise HTTPException(status_code=403, detail="Forbidden: Project does not exist or you do not own it.")
 
-    existing = db.query(DBModel).filter(DBModel.model_id == req.model_id).first()
+    existing = db.query(DBModel).filter(DBModel.model_id == req.model_id, DBModel.project_id == proj_id).first()
     if existing:
-        if existing.owner_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
-        existing.project_id = proj_id
         existing.drift_threshold = req.drift_threshold
         existing.features_json = json.dumps(req.features)
         existing.reference_data_path = req.reference_data_path
@@ -481,6 +524,7 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
     
     # Insert first version as champion in model version registry
     init_version = DBModelVersion(
+        project_id=proj_id,
         model_id=req.model_id,
         version="1.0.0",
         status="champion",
@@ -500,7 +544,7 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
     Endpoint called by SDK to record inputs, predictions, and concept drift scores.
     Updates active Prometheus scrapers.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         # Get or create a default project for this user
         project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
@@ -521,6 +565,7 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
         
         # Insert first version as champion in model version registry
         init_version = DBModelVersion(
+            project_id=project.id,
             model_id=model_id,
             version="1.0.0",
             status="champion",
@@ -528,12 +573,10 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
         )
         db.add(init_version)
         db.commit()
-    else:
-        if model.owner_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     # Log prediction into Database
     log_entry = DBPredictionLog(
+        project_id=model.project_id,
         model_id=model_id,
         features_json=json.dumps(req.features),
         prediction_json=json.dumps(req.prediction),
@@ -559,6 +602,7 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
         
         # Log to Audit Log DB
         audit = DBAuditLogEntry(
+            project_id=model.project_id,
             model_id=model_id,
             event_type="drift_detected",
             model_version=model.version,
@@ -588,13 +632,11 @@ def get_drift_metrics(model_id: str, current_user: DBUser = Depends(get_current_
     """
     Fetches drift metrics history for Recharts visualization.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
     logs = db.query(DBPredictionLog)\
-             .filter(DBPredictionLog.model_id == model_id)\
+             .filter(DBPredictionLog.model_id == model_id, DBPredictionLog.project_id == model.project_id)\
              .order_by(DBPredictionLog.timestamp.desc())\
              .limit(100)\
              .all()
@@ -626,6 +668,7 @@ def list_models(current_user: DBUser = Depends(get_current_user), db: Session = 
     """
     Lists monitored models including current active performance, status, and thresholds.
     """
+    check_and_recover_all_stale_jobs_for_user(current_user.id, db)
     models = db.query(DBModel).filter(DBModel.owner_id == current_user.id).all()
     # If empty, seed a mock model for the dashboard to showcase beautiful styles out-of-the-box
     if not models:
@@ -666,11 +709,13 @@ def get_model_details(model_id: str, current_user: DBUser = Depends(get_current_
     """
     Get all fields of a specific model by ID.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    check_and_recover_all_stale_jobs_for_user(current_user.id, db)
+    model = db.query(DBModel).filter(
+        DBModel.model_id == model_id,
+        DBModel.owner_id == current_user.id
+    ).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
     return {
         "model_id": model.model_id,
         "drift_threshold": model.drift_threshold,
@@ -687,14 +732,12 @@ def get_model_versions(model_id: str, current_user: DBUser = Depends(get_current
     """
     Retrieves the complete registered version history for a given model.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     versions = db.query(DBModelVersion)\
-                 .filter(DBModelVersion.model_id == model_id)\
+                 .filter(DBModelVersion.model_id == model_id, DBModelVersion.project_id == model.project_id)\
                  .order_by(DBModelVersion.created_at.desc())\
                  .all()
     if not versions:
@@ -710,15 +753,14 @@ def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DB
     """
     Emergency rollback target version to champion, archiving current champion.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
         
     # Locate target version in model registry
     target_ver = db.query(DBModelVersion).filter(
         DBModelVersion.model_id == model_id,
+        DBModelVersion.project_id == model.project_id,
         DBModelVersion.version == req.target_version
     ).first()
     
@@ -728,19 +770,28 @@ def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DB
     if target_ver.status == "champion":
         raise HTTPException(status_code=400, detail=f"Target version {req.target_version} is already the current champion.")
 
-    # Load previous model artifact and restore
+    # Load previous model artifact and restore (Verify artifact exists and loads before DB changes)
     artifact_path = f"artifacts/{model.project_id}/{model_id}/version_{target_ver.version}.pkl"
-    if os.path.exists(artifact_path):
-        try:
-            import joblib
-            restored_clf = joblib.load(artifact_path)
-            print(f"[Rollback] Successfully loaded and restored previous model artifact: {artifact_path}")
-        except Exception as e:
-            logger.warning(f"[{model_id}] Rollback artifact load failed: {e}")
+    if not os.path.exists(artifact_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Rollback failed: Model artifact file for version {target_ver.version} not found on disk at {artifact_path}."
+        )
+        
+    try:
+        import joblib
+        _ = joblib.load(artifact_path)
+        print(f"[Rollback] Successfully validated previous model artifact: {artifact_path}")
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Rollback failed: Model artifact file for version {target_ver.version} is corrupted or cannot be loaded: {str(e)}."
+        )
         
     # Archive current champion
     db.query(DBModelVersion).filter(
         DBModelVersion.model_id == model_id,
+        DBModelVersion.project_id == model.project_id,
         DBModelVersion.status == "champion"
     ).update({"status": "archived"})
     
@@ -757,6 +808,7 @@ def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DB
     
     # Write rollback/reversion audit entry
     db.add(DBAuditLogEntry(
+        project_id=model.project_id,
         model_id=model_id,
         event_type="rollback",
         model_version=target_ver.version,
@@ -801,14 +853,12 @@ def get_retraining_history(model_id: str, current_user: DBUser = Depends(get_cur
     """
     Exposes full retraining executions details.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     events = db.query(DBRetrainingEvent)\
-               .filter(DBRetrainingEvent.model_id == model_id)\
+               .filter(DBRetrainingEvent.model_id == model_id, DBRetrainingEvent.project_id == model.project_id)\
                .order_by(DBRetrainingEvent.start_time.desc())\
                .all()
     if not events:
@@ -846,14 +896,12 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
     """
     Returns structured audit entries.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     logs = db.query(DBAuditLogEntry)\
-             .filter(DBAuditLogEntry.model_id == model_id)\
+             .filter(DBAuditLogEntry.model_id == model_id, DBAuditLogEntry.project_id == model.project_id)\
              .order_by(DBAuditLogEntry.timestamp.desc())\
              .all()
              
@@ -879,23 +927,59 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
         "details": json.loads(log.details_json)
     } for log in logs]
 
+def check_and_recover_all_stale_jobs_for_user(user_id: int, db: Session):
+    timeout_limit = datetime.datetime.utcnow() - datetime.timedelta(seconds=300)
+    stale_events = db.query(DBRetrainingEvent).join(
+        DBModel,
+        (DBModel.model_id == DBRetrainingEvent.model_id) & (DBModel.project_id == DBRetrainingEvent.project_id)
+    ).filter(
+        DBModel.owner_id == user_id,
+        DBRetrainingEvent.status == "running",
+        DBRetrainingEvent.last_heartbeat < timeout_limit
+    ).all()
+    
+    if stale_events:
+        print(f"[Self-Healing] Recovering {len(stale_events)} stale retraining events for user {user_id}...")
+        for event in stale_events:
+            event.status = "failed"
+            event.end_time = datetime.datetime.utcnow()
+            event.details_json = json.dumps({"error": "Retraining job timed out/stale. Recovered by watchdog lock resolver."})
+            
+            db.add(DBAuditLogEntry(
+                project_id=event.project_id,
+                model_id=event.model_id,
+                event_type="validation_failed",
+                model_version=event.old_version,
+                drift_score=0.0,
+                triggered_by=event.triggered_by,
+                details_json=json.dumps({"error": "Retraining job timed out/stale. Lock resolved."})
+            ))
+            
+            # Revert model status
+            model = db.query(DBModel).filter(
+                DBModel.model_id == event.model_id,
+                DBModel.project_id == event.project_id
+            ).first()
+            if model:
+                model.status = "healthy"
+        db.commit()
+
 @app.post("/retrain/{model_id}", summary="Triggers retraining flow process asynchronously")
 def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tasks: BackgroundTasks, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Main trigger endpoint. Creates a retraining event record.
-
-    If ``source == 'server'`` (default): spawns the built-in server-side
-    pipeline as a background task.
-
-    If ``source == 'sdk_callback'``: only records the event — the SDK
-    CallbackRunner owns the pipeline and will POST results to
-    ``/retrain/{model_id}/complete`` when done.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    # 1. Recover any stale locks first
+    check_and_recover_all_stale_jobs_for_user(current_user.id, db)
+
+    # 2. Acquire row lock (with_for_update) to resolve concurrent retraining races
+    model = db.query(DBModel).filter(
+        DBModel.model_id == model_id,
+        DBModel.owner_id == current_user.id
+    ).with_for_update().first()
+
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     if model.status == "retraining":
         return {"status": "already_running", "message": "Retraining is currently running."}
@@ -906,11 +990,13 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
 
     # Create run event entry
     event = DBRetrainingEvent(
+        project_id=model.project_id,
         model_id=model_id,
         status="running",
         triggered_by=req.triggered_by,
         old_accuracy=model.accuracy,
-        old_version=model.version
+        old_version=model.version,
+        last_heartbeat=datetime.datetime.utcnow()
     )
     db.add(event)
     db.commit()
@@ -920,7 +1006,6 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
 
     if req.source == "sdk_callback":
         # SDK owns the pipeline — do NOT spawn a server-side background task.
-        # The SDK CallbackRunner will POST /retrain/{model_id}/complete when done.
         return {
             "status": "recorded",
             "event_id": event.id,
@@ -944,20 +1029,18 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
     """
     Called exclusively by the SDK's ``RetrainerCallbackRunner`` after its
     local pipeline finishes. Updates model record, audit log, Prometheus
-    metrics, and Slack alerts — identical post-processing to the server-side
-    pipeline, but driven by externally-produced results.
+    metrics, and Slack alerts.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
+    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not registered.")
-    if model.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     # Locate the event record
     event = None
     if req.event_id:
         event = db.query(DBRetrainingEvent).filter(
-            DBRetrainingEvent.id == req.event_id
+            DBRetrainingEvent.id == req.event_id,
+            DBRetrainingEvent.project_id == model.project_id
         ).first()
     if event is None:
         # Fall back to the latest running event for this model
@@ -965,6 +1048,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
             db.query(DBRetrainingEvent)
             .filter(
                 DBRetrainingEvent.model_id == model_id,
+                DBRetrainingEvent.project_id == model.project_id,
                 DBRetrainingEvent.status == "running",
             )
             .order_by(DBRetrainingEvent.start_time.desc())
@@ -983,11 +1067,13 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
         # Archive old champion version in version registry
         db.query(DBModelVersion).filter(
             DBModelVersion.model_id == model_id,
+            DBModelVersion.project_id == model.project_id,
             DBModelVersion.status == "champion"
         ).update({"status": "archived"})
 
         # Insert new challenger version as champion
         new_version_rec = DBModelVersion(
+            project_id=model.project_id,
             model_id=model_id,
             version=req.new_version,
             status="champion",
@@ -1007,6 +1093,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
 
         # Write promotion audit entry
         db.add(DBAuditLogEntry(
+            project_id=model.project_id,
             model_id=model_id,
             event_type="model_promoted",
             model_version=req.new_version,
@@ -1064,10 +1151,11 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
 
         # Write rejection audit entry
         db.add(DBAuditLogEntry(
+            project_id=model.project_id,
             model_id=model_id,
             event_type="validation_failed",
             model_version=model.version,
-            drift_score=req.new_accuracy or 0.0,
+            drift_score=0.0,
             triggered_by="automatic",
             details_json=json.dumps(
                 {"error": req.error or "Challenger did not pass validation.",
@@ -1164,11 +1252,17 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
     db = SessionLocal()
     try:
         print(f"[{model_id}] Starting pipeline execution...")
-        model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
         event = db.query(DBRetrainingEvent).filter(DBRetrainingEvent.id == event_id).first()
+        proj_id = event.project_id if event else 1
+        model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.project_id == proj_id).first()
         
+        if not model:
+            print(f"[{model_id}] Model not found in DB, aborting background retraining.")
+            return
+
         # 1. Log Retrain Trigger in Audit Logs
         audit_trig = DBAuditLogEntry(
+            project_id=model.project_id,
             model_id=model_id,
             event_type="retrain_triggered",
             model_version=model.version,
@@ -1197,15 +1291,11 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
                 current_version=model.version
             )
         except Exception as pi_err:
-            # Graceful pipeline execution mock if import fails (keeps API working without full ZenML local server setup)
-            print(f"Pipeline flow import/run warning: {pi_err}. Running sandbox simulator mode.")
-            time.sleep(3.0)  # Simulate model training
+            print(f"Pipeline flow execution failed: {pi_err}")
             pipeline_results = {
-                "success": True,
-                "validation_passed": True,
-                "new_accuracy": model.accuracy + 0.021,  # Simulation beats champion by > 1%
-                "new_version": f"1.0.{int(model.version.split('.')[-1]) + 1}",
-                "details": {"message": "Sandbox training completed successfully."}
+                "success": False,
+                "validation_passed": False,
+                "error": str(pi_err)
             }
 
         # 3. Check retraining pipeline outcomes
@@ -1222,11 +1312,13 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             # Archive old champion version in version registry
             db.query(DBModelVersion).filter(
                 DBModelVersion.model_id == model_id,
+                DBModelVersion.project_id == model.project_id,
                 DBModelVersion.status == "champion"
             ).update({"status": "archived"})
 
             # Insert new challenger version as champion
             new_version_rec = DBModelVersion(
+                project_id=model.project_id,
                 model_id=model_id,
                 version=new_ver,
                 status="champion",
@@ -1235,14 +1327,16 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             db.add(new_version_rec)
             
             # Update Retraining Event
-            event.status = "completed"
-            event.end_time = datetime.datetime.utcnow()
-            event.new_accuracy = new_acc
-            event.new_version = new_ver
-            event.details_json = json.dumps(pipeline_results.get("details", {}))
+            if event:
+                event.status = "completed"
+                event.end_time = datetime.datetime.utcnow()
+                event.new_accuracy = new_acc
+                event.new_version = new_ver
+                event.details_json = json.dumps(pipeline_results.get("details", {}))
             
             # Write Promotion Audit Log
             audit_prom = DBAuditLogEntry(
+                project_id=model.project_id,
                 model_id=model_id,
                 event_type="model_promoted",
                 model_version=new_ver,
@@ -1250,7 +1344,7 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
                 triggered_by="automatic" if triggered_by == "automatic" else "manual",
                 details_json=json.dumps({
                     "message": f"Challenger model {new_ver} promoted to champion. Succeeded accuracy validation check ({new_acc:.4f} > {event.old_accuracy:.4f}).",
-                    "before_accuracy": event.old_accuracy,
+                    "before_accuracy": event.old_accuracy if event else model.accuracy,
                     "after_accuracy": new_acc
                 })
             )
@@ -1266,9 +1360,9 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
                 message=f"New model version '{new_ver}' promoted to champion!",
                 details={
                     "model_id": model_id,
-                    "old_version": event.old_version,
+                    "old_version": event.old_version if event else model.version,
                     "new_version": new_ver,
-                    "old_accuracy": f"{event.old_accuracy:.4f}",
+                    "old_accuracy": f"{event.old_accuracy:.4f}" if event else f"{model.accuracy:.4f}",
                     "new_accuracy": f"{new_acc:.4f}"
                 }
             )
@@ -1276,15 +1370,17 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             # Succeeded training but validation failed, or pipeline failed
             model.status = "healthy"  # Revert back to healthy (using original champion model)
             
-            event.status = "failed"
-            event.end_time = datetime.datetime.utcnow()
-            event.details_json = json.dumps({
-                "error": pipeline_results.get("error", "Validation failed"),
-                "message": "Model challenger rejected because it did not beat production champion by 1% on primary metric."
-            })
+            if event:
+                event.status = "failed"
+                event.end_time = datetime.datetime.utcnow()
+                event.details_json = json.dumps({
+                    "error": pipeline_results.get("error", "Validation failed"),
+                    "message": "Model challenger rejected because it did not beat production champion by 1% on primary metric."
+                })
             
             # Write Fail Audit Log
             audit_fail = DBAuditLogEntry(
+                project_id=model.project_id,
                 model_id=model_id,
                 event_type="validation_failed",
                 model_version=model.version,
@@ -1315,10 +1411,14 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
         print(f"Background retraining crash on model {model_id}: {e}")
         # Robust revert
         try:
-            model = db.query(DBModel).filter(DBModel.model_id == model_id).first()
-            if model:
-                model.status = "healthy"
-                db.commit()
+            db_err = SessionLocal()
+            try:
+                model = db_err.query(DBModel).filter(DBModel.model_id == model_id, DBModel.project_id == proj_id).first()
+                if model:
+                    model.status = "healthy"
+                    db_err.commit()
+            finally:
+                db_err.close()
         except Exception:
             pass
     finally:
