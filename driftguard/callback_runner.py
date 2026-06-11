@@ -206,11 +206,10 @@ class RetrainerCallbackRunner:
         val_labels = self.tracker._validation_labels
 
         if val_features is None or val_labels is None:
-            logger.warning(
-                f"[{self.model_id}] No validation data registered via "
-                "dg.set_validation_data(). Promoting without accuracy comparison."
+            raise ValueError(
+                f"Validation data is missing for model '{self.model_id}'. "
+                "Validation datasets are required when retraining triggers."
             )
-            return True, 0.0, 1.0
 
         from driftguard.validation import validate_challenger_vs_champion
 
