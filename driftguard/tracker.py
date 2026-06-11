@@ -83,6 +83,10 @@ class DriftGuard:
 
         # Telemetry Queue & Worker setup
         self._telemetry_queue = queue.Queue(maxsize=15000)
+        self.telemetry_queued = 0
+        self.telemetry_sent = 0
+        self.telemetry_failed = 0
+        self._is_shutdown = False
         self._telemetry_stop_event = threading.Event()
         self._telemetry_worker = threading.Thread(
             target=self._telemetry_worker_loop,
@@ -204,14 +208,19 @@ class DriftGuard:
         Puts telemetry payload onto the queue for asynchronous logging.
         Drops data under queue overflow to prevent latency spikes in the prediction loop.
         """
+        if self._is_shutdown:
+            logger.warning(f"[{self.model_id}] Telemetry tracker has been shut down. Rejecting new payload.")
+            return
         payload = {
             "features": features,
             "prediction": prediction,
             "drift_score": drift_score
         }
+        self.telemetry_queued += 1
         try:
             self._telemetry_queue.put_nowait(payload)
         except queue.Full:
+            self.telemetry_failed += 1
             import sys
             print(f"[DriftGuard SDK] Telemetry queue full. Dropping payload to prevent model latency spike.", file=sys.stderr)
             logger.warning(
@@ -238,14 +247,18 @@ class DriftGuard:
                 
                 # Attempt to upload telemetry with retry logic
                 success = False
+                terminal_fail = False
                 for attempt in range(5):
                     try:
                         resp = client.post(url, json=payload, headers=headers)
                         if resp.status_code == 200:
                             success = True
+                            self.telemetry_sent += 1
                             break
                         elif resp.status_code == 401:
                             print(f"[DriftGuard SDK] Telemetry failed: 401 Unauthorized")
+                            self.telemetry_failed += 1
+                            terminal_fail = True
                             break
                         else:
                             print(f"[DriftGuard SDK] Telemetry upload failed (HTTP {resp.status_code}). Attempt {attempt + 1}/5")
@@ -260,6 +273,8 @@ class DriftGuard:
                         print(f"[DriftGuard SDK] Telemetry error: {err}. Attempt {attempt + 1}/5")
                     time.sleep(0.05 * (attempt + 1))  # exponential backoff
                 
+                if not success and not terminal_fail:
+                    self.telemetry_failed += 1
                 self._telemetry_queue.task_done()
         finally:
             try:
@@ -267,16 +282,39 @@ class DriftGuard:
             except Exception:
                 pass
 
+    def shutdown(self, timeout: float = 30.0):
+        """
+        Gracefully shut down the telemetry tracker:
+        - Stop accepting new telemetry payloads
+        - Wait for any remaining items in the queue to be processed (drain)
+        - Signal worker to stop
+        - Join the worker thread (which guarantees HTTP client/session is closed cleanly)
+        """
+        if self._is_shutdown:
+            return
+            
+        logger.info(f"[{self.model_id}] Initiating graceful SDK telemetry shutdown...")
+        self._is_shutdown = True
+        
+        # Signal stop event
+        self._telemetry_stop_event.set()
+        
+        # Wait for worker thread to finish (it will process the remaining queue items before stopping)
+        if self._telemetry_worker.is_alive():
+            logger.info(f"[{self.model_id}] Flushing telemetry queue ({self._telemetry_queue.qsize()} items) and waiting for worker thread...")
+            self._telemetry_worker.join(timeout=timeout)
+            if self._telemetry_worker.is_alive():
+                logger.warning(f"[{self.model_id}] Telemetry worker did not stop within {timeout}s timeout.")
+            else:
+                logger.info(f"[{self.model_id}] Telemetry worker stopped successfully.")
+                
+        logger.info(f"[{self.model_id}] Graceful shutdown complete. Queued: {self.telemetry_queued}, Sent: {self.telemetry_sent}, Failed: {self.telemetry_failed}")
+
     def _shutdown_telemetry_worker(self):
         """
         Graceful shutdown hook. Set stop event and flush remaining queue items.
         """
-        logger.info(f"[{self.model_id}] Shutting down telemetry worker gracefully...")
-        self._telemetry_stop_event.set()
-        # Wait up to 5 seconds for queue to drain
-        t0 = time.time()
-        while not self._telemetry_queue.empty() and (time.time() - t0) < 5.0:
-            time.sleep(0.1)
+        self.shutdown(timeout=5.0)
 
     def _trigger_retraining_async(self, current_drift_score: float) -> None:
         """
