@@ -3,7 +3,7 @@ export default async function handler(req, res) {
   const apiKey = req.headers['x-api-key'] || '';
   const { id } = req.query;
 
-  if (req.method !== 'GET') {
+  if (req.method !== 'POST') {
     return res.status(405).json({ detail: 'Method Not Allowed' });
   }
 
@@ -12,12 +12,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch(`${backendUrl}/drift/${id}`, {
-      method: 'GET',
+    const response = await fetch(`${backendUrl}/retrain/${id}`, {
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': apiKey
-      }
+      },
+      body: JSON.stringify(req.body)
     });
 
     const text = await response.text();
@@ -29,7 +30,7 @@ export default async function handler(req, res) {
       return res.send(text);
     }
   } catch (error) {
-    console.error(`Proxy error in /api/drift for ${id}:`, error);
+    console.error(`Proxy error in /api/retrain for ${id}:`, error);
     return res.status(500).json({ detail: 'Cannot connect to DriftGuard API' });
   }
 }

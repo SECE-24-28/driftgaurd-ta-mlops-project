@@ -1,79 +1,106 @@
 import React from 'react';
 import {
-  ResponsiveContainer,
   LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ReferenceLine
+  ReferenceLine,
+  ResponsiveContainer
 } from 'recharts';
+import { formatDriftScore } from '../lib/utils';
 
-export default function DriftChart({ data }) {
-  // Format dates for readability
-  const formattedData = (data || []).map((item) => ({
-    ...item,
-    time: new Date(item.timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    }),
-    score: parseFloat(item.drift_score.toFixed(4))
-  }));
+export default function DriftChart({ data, threshold }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-[#1c2128] border border-[#30363d] h-[350px] rounded-lg flex items-center justify-center text-[#7d8590] text-sm">
+        No predictions recorded yet
+      </div>
+    );
+  }
+
+  const formatXAxis = (tickItem) => {
+    if (!tickItem) return '';
+    try {
+      const d = new Date(tickItem);
+      if (isNaN(d.getTime())) return tickItem;
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      return `${hours}:${minutes}`;
+    } catch (_) {
+      return tickItem;
+    }
+  };
+
+  const CustomTooltip = ({ active, payload }) => {
+    if (active && payload && payload.length) {
+      const item = payload[0].payload;
+      const dateStr = new Date(item.timestamp).toLocaleString();
+      return (
+        <div className="drift-chart-tooltip">
+          <p className="text-[10px] text-[#7d8590] font-semibold uppercase tracking-wider mb-1">Telemetry Record</p>
+          <p className="font-semibold text-xs text-[#e6edf3] mb-1">Time: {dateStr}</p>
+          <p className="font-semibold text-xs text-[#58a6ff]">Drift Score: {formatDriftScore(item.drift_score)}</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
-    <div className="bg-obsidian-900 border border-slate-800 rounded-xl p-6 shadow-lg">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h3 className="text-lg font-bold text-slate-100">Concept Drift History</h3>
-          <p className="text-sm text-slate-400">Real-time rolling ADWIN values vs. evidently baseline</p>
-        </div>
-        <div className="flex items-center space-x-2 text-xs">
-          <span className="inline-block w-3 h-3 bg-teal-500 rounded-full"></span>
-          <span className="text-slate-400">Drift Score</span>
-          <span className="inline-block w-3 h-1 border-t border-dashed border-red-500 ml-4"></span>
-          <span className="text-slate-400">Limit (0.15)</span>
-        </div>
+    <div className="bg-[#1c2128] border border-[#30363d] p-5 rounded-lg shadow-md space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-[#e6edf3]">Drift Score — Last 100 Predictions</h3>
+        <span className="text-[11px] font-semibold text-[#7d8590] bg-[#21262d] border border-[#30363d] px-2 py-0.5 rounded">
+          Active Limit: {threshold}
+        </span>
       </div>
-
-      <div className="h-72 w-full">
-        {formattedData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-500">
-            Awaiting prediction telemetry streams...
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={formattedData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-              <defs>
-                <linearGradient id="driftGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0d9488" stopOpacity={0.8} />
-                  <stop offset="95%" stopColor="#0d9488" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} />
-              <YAxis stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 'auto']} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#090d16',
-                  borderColor: '#334155',
-                  borderRadius: '8px',
-                  color: '#f1f5f9'
+      <div className="h-[280px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <CartesianGrid stroke="#30363d" strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="timestamp"
+              tickFormatter={formatXAxis}
+              stroke="#7d8590"
+              fontSize={10}
+              tickLine={false}
+              axisLine={{ stroke: '#30363d' }}
+            />
+            <YAxis
+              domain={[0, 1]}
+              stroke="#7d8590"
+              fontSize={10}
+              tickLine={false}
+              axisLine={{ stroke: '#30363d' }}
+            />
+            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#30363d', strokeWidth: 1 }} />
+            {threshold !== undefined && (
+              <ReferenceLine
+                y={threshold}
+                stroke="#f85149"
+                strokeWidth={1.5}
+                strokeDasharray="5 5"
+                label={{
+                  value: `Threshold (${threshold})`,
+                  fill: '#f85149',
+                  fontSize: 10,
+                  position: 'top',
+                  fontWeight: 'semibold'
                 }}
-                labelStyle={{ color: '#94a3b8', fontSize: '12px' }}
               />
-              <ReferenceLine y={0.15} stroke="#ef4444" strokeDasharray="3 3" />
-              <Line
-                type="monotone"
-                dataKey="score"
-                stroke="#0d9488"
-                strokeWidth={2.5}
-                dot={{ r: 2, fill: '#0d9488' }}
-                activeDot={{ r: 5, fill: '#0d9488' }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
+            )}
+            <Line
+              type="monotone"
+              dataKey="drift_score"
+              stroke="#58a6ff"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, strokeWidth: 0, fill: '#58a6ff' }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

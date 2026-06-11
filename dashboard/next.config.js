@@ -1,15 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
   output: 'standalone',
+  reactStrictMode: true,
   async rewrites() {
     return [
       {
-        source: '/api/:path*',
-        destination: 'http://driftguard-api:8000/:path*',
-      },
-    ];
+        source: '/api-proxy/:path*',
+        destination: 'http://localhost:8000/:path*'
+      }
+    ]
   },
-};
-
-module.exports = nextConfig;
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  }
+}
+module.exports = nextConfig
