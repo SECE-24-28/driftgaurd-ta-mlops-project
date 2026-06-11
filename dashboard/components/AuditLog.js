@@ -1,129 +1,155 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { formatDate, formatDriftScore } from '../lib/utils';
+import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function AuditLog({ logs }) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [expandedRow, setExpandedRow] = useState(null);
+  const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
 
   if (!logs || logs.length === 0) {
     return (
-      <div className="bg-obsidian-900 border border-slate-800 rounded-xl p-6 shadow-md text-center text-slate-500">
-        No audit logs recorded.
+      <div className="bg-[#1c2128] border border-[#30363d] p-5 rounded-lg text-center text-[#7d8590] text-sm">
+        No audit events recorded yet
       </div>
     );
   }
 
-  const toggleExpand = (idx) => {
-    if (expandedRow === idx) {
-      setExpandedRow(null);
-    } else {
-      setExpandedRow(idx);
+  const getEventBadgeClass = (type) => {
+    switch (String(type).toLowerCase()) {
+      case 'drift_detected':
+        return 'text-[#d29922] bg-[#3d2f00] border border-[#554000]/40';
+      case 'retrain_triggered':
+        return 'text-[#58a6ff] bg-[#1c2d3a] border border-[#243e56]/40';
+      case 'model_promoted':
+        return 'text-[#3fb950] bg-[#1a4731] border border-[#1f5a3a]/40';
+      case 'rollback':
+        return 'text-[#f85149] bg-[#3d1515] border border-[#5a1e1e]/40';
+      default:
+        return 'text-[#e6edf3] bg-[#21262d] border border-[#30363d]';
     }
   };
 
-  // Filter logs based on search
-  const filteredLogs = logs.filter((log) => {
-    const term = searchTerm.toLowerCase();
+  const formatEventType = (type) => {
+    return String(type).replace('_', ' ').toUpperCase();
+  };
+
+  // Filter logs based on search string
+  const filteredLogs = logs.filter(log => {
+    const term = search.toLowerCase();
     return (
-      log.event_type.toLowerCase().includes(term) ||
-      log.triggered_by.toLowerCase().includes(term) ||
-      log.model_version.toLowerCase().includes(term) ||
-      (log.details && JSON.stringify(log.details).toLowerCase().includes(term))
+      String(log.event_type || '').toLowerCase().includes(term) ||
+      String(log.model_version || '').toLowerCase().includes(term) ||
+      String(log.triggered_by || '').toLowerCase().includes(term) ||
+      String(log.drift_score || '').toLowerCase().includes(term) ||
+      formatDate(log.timestamp).toLowerCase().includes(term)
     );
   });
 
-  const getEventBadge = (type) => {
-    const base = "text-[10px] font-bold px-2 py-0.5 rounded uppercase border ";
-    if (type === 'drift_detected') {
-      return <span className={base + "bg-red-950/70 text-red-400 border-red-900 animate-pulse"}>Drift Detected</span>;
-    } else if (type === 'retrain_triggered') {
-      return <span className={base + "bg-blue-950/70 text-blue-400 border-blue-900"}>Retraining</span>;
-    } else if (type === 'model_promoted') {
-      return <span className={base + "bg-emerald-950/70 text-emerald-400 border-emerald-900"}>Model Promoted</span>;
-    } else {
-      return <span className={base + "bg-amber-950/70 text-amber-400 border-amber-900"}>Rollback</span>;
-    }
-  };
+  // Pagination parameters
+  const pageSize = 10;
+  const totalItems = filteredLogs.length;
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  
+  // Enforce page constraints
+  const activePage = Math.min(currentPage, totalPages);
+  const startIndex = (activePage - 1) * pageSize;
+  const currentLogs = filteredLogs.slice(startIndex, startIndex + pageSize);
 
   return (
-    <div className="bg-obsidian-900 border border-slate-800 rounded-xl p-6 shadow-md">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <h3 className="text-lg font-bold text-slate-100 flex items-center space-x-2">
-          <ShieldCheck className="w-5 h-5 text-teal-500" />
-          <span>Governance & Compliance Audit Trail</span>
-        </h3>
-        
-        <div className="relative max-w-xs w-full">
-          <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+    <div className="bg-[#1c2128] border border-[#30363d] p-5 rounded-lg shadow-md flex flex-col space-y-4">
+      {/* Search Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <h3 className="text-sm font-bold text-[#e6edf3]">Audit Trail & Ledger</h3>
+        <div className="relative w-full md:w-72">
+          <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#7d8590]">
+            <Search className="w-3.5 h-3.5" />
+          </span>
           <input
             type="text"
-            placeholder="Search audit trail..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-lg bg-slate-950 border border-slate-800 text-sm text-slate-200 focus:outline-none focus:border-teal-500 transition-colors"
+            placeholder="Filter audit logs..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="w-full pl-9 pr-4 py-1.5 rounded-lg bg-[#0d1117] border border-[#30363d] text-xs text-[#e6edf3] placeholder-[#7d8590] focus:outline-none focus:border-[#58a6ff] transition-colors"
           />
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/20">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-900/60 text-slate-400 text-xs font-semibold uppercase">
-            <tr>
-              <th className="px-4 py-3">Timestamp (UTC)</th>
-              <th className="px-4 py-3">Event Category</th>
-              <th className="px-4 py-3">Version</th>
-              <th className="px-4 py-3">Origin</th>
-              <th className="px-4 py-3 text-right">Details</th>
+      {/* Table grid */}
+      <div className="overflow-x-auto border border-[#30363d]/50 rounded-lg">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-[#161b22] border-b border-[#30363d] text-[10px] text-[#7d8590] uppercase tracking-wider font-semibold">
+              <th className="px-4 py-3">Timestamp</th>
+              <th className="px-4 py-3">Event Type</th>
+              <th className="px-4 py-3">Model Version</th>
+              <th className="px-4 py-3">Drift Score</th>
+              <th className="px-4 py-3">Triggered By</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-900 text-slate-300">
-            {filteredLogs.length === 0 ? (
+          <tbody className="divide-y divide-[#30363d]/30 text-xs">
+            {currentLogs.length === 0 ? (
               <tr>
-                <td colSpan="5" className="px-4 py-8 text-center text-slate-500">
-                  No records match your search criteria.
+                <td colSpan={5} className="px-4 py-8 text-center text-[#7d8590]">
+                  No matching audit logs located
                 </td>
               </tr>
             ) : (
-              filteredLogs.map((log, idx) => {
-                const dateStr = new Date(log.timestamp).toLocaleString();
-                const isExpanded = expandedRow === idx;
-                
-                return (
-                  <React.Fragment key={idx}>
-                    <tr
-                      className="hover:bg-slate-900/20 transition-colors cursor-pointer"
-                      onClick={() => toggleExpand(idx)}
-                    >
-                      <td className="px-4 py-3.5 font-mono text-xs text-slate-450">{dateStr}</td>
-                      <td className="px-4 py-3.5">{getEventBadge(log.event_type)}</td>
-                      <td className="px-4 py-3.5 font-mono text-xs">{log.model_version}</td>
-                      <td className="px-4 py-3.5 text-xs text-slate-400">{log.triggered_by}</td>
-                      <td className="px-4 py-3.5 text-right">
-                        <button className="text-teal-500 hover:text-teal-400 focus:outline-none inline-flex items-center space-x-1 text-xs">
-                          <span>Inspect</span>
-                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                        </button>
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr className="bg-slate-950/70 border-t border-slate-900">
-                        <td colSpan="5" className="px-4 py-4">
-                          <div className="bg-slate-950 p-4 rounded-lg border border-slate-850">
-                            <span className="text-[10px] text-slate-500 block uppercase font-bold mb-2">Audit Compliance Log Metadata (EU AI Act Payload)</span>
-                            <pre className="text-xs text-slate-300 font-mono overflow-x-auto max-h-60 leading-relaxed">
-                              {JSON.stringify(log.details, null, 2)}
-                            </pre>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })
+              currentLogs.map((log, index) => (
+                <tr key={index} className="hover:bg-[#21262d]/20 transition-colors">
+                  <td className="px-4 py-3 text-[#7d8590] font-mono">
+                    {formatDate(log.timestamp)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase border ${getEventBadgeClass(log.event_type)}`}>
+                      {formatEventType(log.event_type)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-[#e6edf3] font-semibold">
+                    v{log.model_version || '1.0.0'}
+                  </td>
+                  <td className="px-4 py-3 text-[#e6edf3] font-mono font-medium">
+                    {formatDriftScore(log.drift_score)}
+                  </td>
+                  <td className="px-4 py-3 text-[#7d8590] uppercase font-bold text-[9px] tracking-wider">
+                    {log.triggered_by || 'auto'}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-2">
+          <span className="text-[10px] text-[#7d8590]">
+            Showing {startIndex + 1} to {Math.min(startIndex + pageSize, totalItems)} of {totalItems} logs
+          </span>
+          <div className="flex space-x-1.5">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={activePage === 1}
+              className="p-1.5 rounded-lg border border-[#30363d] bg-[#21262d]/50 hover:bg-[#21262d] text-[#e6edf3] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="px-3 py-1.5 text-xs text-[#e6edf3] bg-[#21262d] border border-[#30363d] rounded-lg font-bold">
+              {activePage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={activePage === totalPages}
+              className="p-1.5 rounded-lg border border-[#30363d] bg-[#21262d]/50 hover:bg-[#21262d] text-[#e6edf3] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

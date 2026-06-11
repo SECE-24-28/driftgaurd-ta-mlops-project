@@ -1,21 +1,31 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: [
-    "./pages/**/*.{js,ts,jsx,tsx,mdx}",
-    "./components/**/*.{js,ts,jsx,tsx,mdx}",
-  ],
-  darkMode: "class",
+  content: ['./pages/**/*.{js,jsx}', './components/**/*.{js,jsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        obsidian: {
-          50: "#f8fafc",
-          100: "#f1f5f9",
-          900: "#090d16",
-          950: "#04060c",
-        },
+        dg: {
+          bg: '#0d1117',
+          sidebar: '#161b22',
+          card: '#1c2128',
+          border: '#30363d',
+          text: '#e6edf3',
+          muted: '#7d8590',
+          blue: '#58a6ff',
+          green: '#3fb950',
+          amber: '#d29922',
+          red: '#f85149',
+          purple: '#a371f7',
+        }
       },
-    },
+      fontFamily: {
+        sans: ['Inter', 'sans-serif']
+      },
+      animation: {
+        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+      }
+    }
   },
-  plugins: [],
+  plugins: []
 };

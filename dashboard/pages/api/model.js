@@ -8,11 +8,11 @@ export default async function handler(req, res) {
   }
 
   if (!id) {
-    return res.status(400).json({ detail: 'Model ID is required' });
+    return res.status(400).json({ detail: 'Model ID query parameter is required' });
   }
 
   try {
-    const response = await fetch(`${backendUrl}/drift/${id}`, {
+    const response = await fetch(`${backendUrl}/models/${id}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       return res.send(text);
     }
   } catch (error) {
-    console.error(`Proxy error in /api/drift for ${id}:`, error);
+    console.error(`Proxy error in /api/model for ${id}:`, error);
     return res.status(500).json({ detail: 'Cannot connect to DriftGuard API' });
   }
 }

@@ -1,66 +1,100 @@
 import React from 'react';
-import Link from 'next/link';
-import { Activity, ShieldAlert, CheckCircle, RefreshCw } from 'lucide-react';
+import { useRouter } from 'next/router';
+import StatusBadge from './StatusBadge';
+import { formatPercent, getAccuracyColor } from '../lib/utils';
+import { Calendar, Eye, Layers } from 'lucide-react';
 
 export default function ModelCard({ model }) {
-  const { model_id, status, accuracy, version, features } = model;
+  const router = useRouter();
 
-  // Compute status styles
-  let statusBadge = null;
-  if (status === 'healthy') {
-    statusBadge = (
-      <span className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">
-        <CheckCircle className="w-3.5 h-3.5" />
-        <span>Healthy</span>
-      </span>
-    );
-  } else if (status === 'degraded') {
-    statusBadge = (
-      <span className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-950 text-red-400 border border-red-800 animate-pulse">
-        <ShieldAlert className="w-3.5 h-3.5" />
-        <span>Degraded</span>
-      </span>
-    );
-  } else {
-    statusBadge = (
-      <span className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-950 text-cyan-400 border border-cyan-800 animate-spin-slow">
-        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-        <span>Retraining</span>
-      </span>
-    );
+  const handleDetails = () => {
+    router.push(`/models/${model.model_id}`);
+  };
+
+  const accuracyVal = model.accuracy !== undefined ? model.accuracy : 0.85;
+  const accuracyColorClass = getAccuracyColor(accuracyVal);
+  const formattedAccuracy = formatPercent(accuracyVal);
+
+  // Parse features list
+  let features = [];
+  try {
+    if (typeof model.features === 'string') {
+      features = JSON.parse(model.features);
+    } else if (Array.isArray(model.features)) {
+      features = model.features;
+    }
+  } catch (e) {
+    features = [];
   }
 
-  return (
-    <div className="bg-obsidian-900 border border-slate-800 hover:border-teal-500/50 transition-all duration-300 rounded-xl p-6 shadow-md hover:shadow-teal-500/5 cursor-pointer flex flex-col justify-between">
-      <div>
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-slate-800/50 rounded-lg text-teal-500">
-              <Activity className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-md font-bold text-slate-100">{model_id}</h4>
-              <p className="text-xs text-slate-400">Ver: {version}</p>
-            </div>
-          </div>
-          {statusBadge}
-        </div>
+  const shownFeatures = features.slice(0, 3);
+  const remainingCount = features.length - 3;
 
-        <div className="grid grid-cols-2 gap-4 my-6">
-          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-850">
-            <span className="text-[10px] text-slate-500 block uppercase font-semibold">Base Accuracy</span>
-            <span className="text-lg font-bold text-slate-200">{(accuracy * 100).toFixed(2)}%</span>
-          </div>
-          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-850">
-            <span className="text-[10px] text-slate-500 block uppercase font-semibold">Features Tracked</span>
-            <span className="text-lg font-bold text-slate-200">{features ? features.length : 0}</span>
-          </div>
+  return (
+    <div className="bg-[#1c2128] border border-[#30363d] hover:border-[#58a6ff]/40 p-5 rounded-lg shadow-md hover:shadow-lg flex flex-col justify-between space-y-4 transition-all duration-300 group">
+      {/* Top row */}
+      <div className="flex items-start justify-between">
+        <div className="flex items-center space-x-2.5 min-w-0">
+          <span className="p-1.5 bg-[#21262d] rounded text-[#58a6ff] border border-[#30363d]">
+            <Layers className="w-3.5 h-3.5" />
+          </span>
+          <h3 className="text-sm font-bold text-[#e6edf3] truncate" title={model.model_id}>
+            {model.model_id}
+          </h3>
+        </div>
+        <StatusBadge status={model.status || 'healthy'} />
+      </div>
+
+      {/* Accuracy meter */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-xs font-semibold text-[#7d8590]">
+          <span>Champion Accuracy</span>
+          <span className="text-[#e6edf3] font-mono">{formattedAccuracy}</span>
+        </div>
+        <div className="w-full bg-[#21262d] h-2 rounded-full overflow-hidden border border-[#30363d]/50">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${accuracyColorClass}`}
+            style={{ width: `${Math.min(100, (accuracyVal > 1.0 ? accuracyVal : accuracyVal * 100))}%` }}
+          />
         </div>
       </div>
 
-      <Link href={`/models/${model_id}`} className="mt-4 block text-center py-2 px-4 rounded-lg bg-teal-600 hover:bg-teal-500 font-medium text-sm text-slate-100 transition-colors duration-200">
-        Open Health Monitor
-      </Link>
+      {/* Threshold & Features list */}
+      <div className="space-y-2 pt-1 border-t border-[#30363d]/50">
+        <div className="flex justify-between text-[11px] font-semibold text-[#7d8590]">
+          <span>Drift Threshold:</span>
+          <span className="text-[#58a6ff] font-mono font-bold">{(model.drift_threshold || 0.15).toFixed(2)}</span>
+        </div>
+        {features.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {shownFeatures.map((feat, idx) => (
+              <span key={idx} className="px-2 py-0.5 text-[9px] font-mono rounded bg-[#21262d] border border-[#30363d] text-[#7d8590]">
+                {feat}
+              </span>
+            ))}
+            {remainingCount > 0 && (
+              <span className="text-[10px] text-[#7d8590] font-bold">
+                +{remainingCount} more
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Footer Details action button */}
+      <div className="flex items-center justify-between pt-2 border-t border-[#30363d]/50">
+        <div className="flex items-center text-[10px] text-[#7d8590] space-x-1.5">
+          <Calendar className="w-3.5 h-3.5" />
+          <span>v{model.version || '1.0.0'}</span>
+        </div>
+        <button
+          onClick={handleDetails}
+          className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-[#21262d] border border-[#30363d] hover:bg-[#58a6ff] hover:text-[#0d1117] hover:border-[#58a6ff] text-xs font-bold text-[#e6edf3] transition-all cursor-pointer group-hover:border-[#58a6ff]/40 active:scale-95"
+        >
+          <Eye className="w-3.5 h-3.5" />
+          <span>View Details</span>
+        </button>
+      </div>
     </div>
   );
 }
