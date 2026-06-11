@@ -34,13 +34,13 @@ export function Navigation() {
       <div className="container mx-auto px-4 h-20 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 group">
           <div className="bg-primary p-2 border-2 border-foreground group-hover:bg-accent transition-colors">
-            <ShieldAlert className="w-6 h-6 text-background" strokeWidth={3} />
+            <ShieldAlert className="w-6 h-6 text-foreground" strokeWidth={3} />
           </div>
-          <span className="font-mono font-black text-2xl tracking-tighter uppercase">DriftGuard</span>
+          <span className="font-mono font-black text-xl tracking-tighter uppercase">DriftGuard</span>
         </Link>
 
         {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-8 font-mono font-bold uppercase tracking-wider">
+        <nav className="hidden md:flex items-center gap-5 font-mono font-bold uppercase tracking-wider">
           {navLinks.map((link) => (
             <Link key={link.name} href={link.href} className="hover:text-primary transition-colors hover:underline decoration-4 underline-offset-4">
               {link.name}
@@ -54,7 +54,7 @@ export function Navigation() {
           </Link>
           <Link
             href="/dashboard"
-            className="bg-primary text-background px-6 py-2 border-2 border-foreground brutal-button uppercase tracking-wider"
+            className="bg-primary text-foreground px-6 py-2 border-2 border-foreground brutal-button uppercase tracking-wider"
           >
             Get Started
           </Link>

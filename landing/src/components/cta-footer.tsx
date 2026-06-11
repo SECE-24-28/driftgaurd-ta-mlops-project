@@ -7,23 +7,23 @@ export function CTAFooter() {
   return (
     <>
       {/* CTA Section */}
-      <section className="py-32 px-4 bg-accent relative overflow-hidden">
+      <section className="py-20 px-4 bg-accent relative overflow-hidden">
          {/* Brutalist Grid overlay */}
          <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'linear-gradient(0deg, transparent 24%, #000 25%, #000 26%, transparent 27%, transparent 74%, #000 75%, #000 76%, transparent 77%, transparent), linear-gradient(90deg, transparent 24%, #000 25%, #000 26%, transparent 27%, transparent 74%, #000 75%, #000 76%, transparent 77%, transparent)', backgroundSize: '40px 40px' }}></div>
          
          <div className="container mx-auto text-center relative z-10">
-            <h2 className="text-5xl md:text-8xl font-black uppercase tracking-tighter text-background leading-[0.9] mb-8" style={{ textShadow: '4px 4px 0 #111' }}>
+            <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter text-background leading-[0.9] mb-6" style={{ textShadow: '4px 4px 0 #111' }}>
               Stop Losing <br/> Accuracy.
             </h2>
-            <p className="text-xl md:text-2xl font-mono font-black uppercase bg-background text-foreground inline-block px-6 py-2 border-4 border-foreground brutal-shadow mb-12">
+            <p className="text-xl md:text-xl font-mono font-black uppercase bg-background text-foreground inline-block px-4 py-2 border-4 border-foreground brutal-shadow mb-6">
               Deploy DriftGuard. Keep your ML production-ready.
             </p>
             
-            <div className="flex flex-col sm:flex-row justify-center gap-6">
-              <Link href="/dashboard" className="bg-primary text-background px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-mono font-black text-2xl uppercase tracking-wider">
-                Start Free <ArrowRight className="w-8 h-8" strokeWidth={4} />
+            <div className="flex flex-col sm:flex-row justify-center gap-5">
+              <Link href="/dashboard" className="bg-primary text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-mono font-black text-xl uppercase tracking-wider">
+                Start Free <ArrowRight className="w-6 h-6" strokeWidth={4} />
               </Link>
-              <Link href="/contact" className="bg-background text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-mono font-black text-2xl uppercase tracking-wider hover:bg-surface">
+              <Link href="/contact" className="bg-background text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-mono font-black text-xl uppercase tracking-wider hover:bg-surface">
                 Schedule Demo
               </Link>
             </div>
@@ -38,13 +38,13 @@ export function CTAFooter() {
               <div className="bg-primary p-2 border-2 border-foreground">
                 <div className="w-4 h-4 bg-background"></div>
               </div>
-              <span className="font-black text-2xl tracking-tighter">DRIFTGUARD</span>
+              <span className="font-black text-xl tracking-tighter">DRIFTGUARD</span>
             </div>
             <p className="text-muted-foreground mb-6 max-w-xs leading-relaxed">
               Automated MLOps platform for drift detection, retraining, and governance.
             </p>
             <div className="flex gap-4">
-               <Link href="https://github.com" className="p-3 bg-surface border-2 border-foreground hover:bg-primary hover:text-background transition-colors brutal-shadow-sm">
+               <Link href="https://github.com" className="p-3 bg-surface border-2 border-foreground hover:bg-primary hover:text-foreground transition-colors brutal-shadow-sm">
                  <GitBranch className="w-6 h-6" />
                </Link>
             </div>
@@ -83,7 +83,7 @@ export function CTAFooter() {
 
         <div className="container mx-auto mt-16 pt-8 border-t-4 border-dashed border-foreground flex flex-col md:flex-row items-center justify-between gap-4 font-mono font-bold text-muted-foreground text-xs uppercase">
           <div>© 2026 DriftGuard Inc. All rights reserved.</div>
-          <div className="flex gap-6">
+          <div className="flex gap-5">
             <Link href="#" className="hover:text-primary">Privacy Policy</Link>
             <Link href="#" className="hover:text-primary">Terms of Service</Link>
           </div>

@@ -15,10 +15,10 @@ export function Comparison() {
   ];
 
   return (
-    <section className="py-24 px-4 bg-primary/10 border-b-4 border-foreground">
+    <section className="py-16 px-4 bg-primary/10 border-b-4 border-foreground">
       <div className="container mx-auto max-w-5xl">
-        <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter bg-background text-foreground inline-block px-6 py-2 border-4 border-foreground brutal-shadow">
+        <div className="text-center mb-6">
+          <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter bg-background text-foreground inline-block px-4 py-2 border-4 border-foreground brutal-shadow">
             DriftGuard vs The Rest
           </h2>
         </div>
@@ -27,25 +27,25 @@ export function Comparison() {
           <table className="w-full text-left font-mono border-collapse">
             <thead>
               <tr className="bg-background text-foreground text-xl uppercase">
-                <th className="p-6 border-b-4 border-r-4 border-foreground w-1/3">Feature</th>
-                <th className="p-6 border-b-4 border-r-4 border-foreground bg-primary text-background w-1/3 text-center">DriftGuard</th>
-                <th className="p-6 border-b-4 border-foreground text-muted-foreground w-1/3 text-center">Traditional Monitoring</th>
+                <th className="p-5 border-b-4 border-r-4 border-foreground w-1/3">Feature</th>
+                <th className="p-5 border-b-4 border-r-4 border-foreground bg-primary text-foreground w-1/3 text-center">DriftGuard</th>
+                <th className="p-5 border-b-4 border-foreground text-muted-foreground w-1/3 text-center">Traditional Monitoring</th>
               </tr>
             </thead>
             <tbody>
               {features.map((feature, i) => (
                 <tr key={i} className="hover:bg-background/50 transition-colors">
-                  <td className="p-6 border-b-4 border-r-4 border-foreground font-bold text-lg">
+                  <td className="p-5 border-b-4 border-r-4 border-foreground font-bold text-lg">
                     {feature.name}
                   </td>
-                  <td className="p-6 border-b-4 border-r-4 border-foreground text-center">
+                  <td className="p-5 border-b-4 border-r-4 border-foreground text-center">
                     <div className="flex justify-center items-center">
                       <div className="w-10 h-10 bg-green-500 border-2 border-foreground flex items-center justify-center brutal-shadow-sm">
-                        <Check className="w-6 h-6 text-background" strokeWidth={4} />
+                        <Check className="w-6 h-6 text-foreground" strokeWidth={4} />
                       </div>
                     </div>
                   </td>
-                  <td className="p-6 border-b-4 border-foreground text-center text-muted-foreground font-bold text-lg">
+                  <td className="p-5 border-b-4 border-foreground text-center text-muted-foreground font-bold text-lg">
                     {feature.trad === true ? (
                       <div className="flex justify-center items-center">
                         <div className="w-10 h-10 bg-surface border-2 border-foreground flex items-center justify-center text-foreground">

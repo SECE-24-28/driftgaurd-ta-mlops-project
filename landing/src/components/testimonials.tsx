@@ -35,19 +35,19 @@ export function Testimonials() {
   const prev = () => setCurrentIndex((prev) => (prev - 1 + testimonials.length) % testimonials.length);
 
   return (
-    <section className="py-24 px-4 bg-background border-b-4 border-foreground overflow-hidden">
+    <section className="py-16 px-4 bg-background border-b-4 border-foreground overflow-hidden">
       <div className="container mx-auto max-w-4xl relative">
         <div className="absolute -top-12 -left-12 opacity-20 hidden md:block">
            <Quote className="w-48 h-48 text-primary" strokeWidth={1} />
         </div>
 
-        <div className="text-center mb-16 relative z-10">
-          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter">
+        <div className="text-center mb-6 relative z-10">
+          <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter">
             Don't Just Take <span className="text-accent glitch-text inline-block" data-text="Our Word">Our Word</span>
           </h2>
         </div>
 
-        <div className="relative border-4 border-foreground brutal-shadow bg-surface min-h-[400px] flex items-center justify-center p-8 md:p-16">
+        <div className="relative border-4 border-foreground brutal-shadow bg-surface min-h-[400px] flex items-center justify-center p-5 md:p-16">
            <AnimatePresence mode="wait">
              <motion.div
                key={currentIndex}
@@ -57,7 +57,7 @@ export function Testimonials() {
                transition={{ duration: 0.3 }}
                className="text-center"
              >
-                <p className="font-mono font-black text-2xl md:text-4xl uppercase leading-tight mb-8">
+                <p className="font-mono font-black text-xl md:text-3xl uppercase leading-tight mb-6">
                   "{testimonials[currentIndex].quote}"
                 </p>
                 <div className="inline-block p-4 border-4 border-foreground bg-background brutal-shadow-sm">
@@ -72,15 +72,15 @@ export function Testimonials() {
            <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 flex gap-4">
               <button 
                 onClick={prev}
-                className={`w-12 h-12 flex items-center justify-center border-4 border-foreground ${testimonials[currentIndex].color} text-background brutal-button hover:scale-110 transition-transform`}
+                className={`w-10 h-10 flex items-center justify-center border-4 border-foreground ${testimonials[currentIndex].color} text-foreground brutal-button hover:scale-110 transition-transform`}
               >
-                <ChevronLeft className="w-8 h-8" strokeWidth={3} />
+                <ChevronLeft className="w-6 h-6" strokeWidth={3} />
               </button>
               <button 
                 onClick={next}
-                className={`w-12 h-12 flex items-center justify-center border-4 border-foreground ${testimonials[currentIndex].color} text-background brutal-button hover:scale-110 transition-transform`}
+                className={`w-10 h-10 flex items-center justify-center border-4 border-foreground ${testimonials[currentIndex].color} text-foreground brutal-button hover:scale-110 transition-transform`}
               >
-                <ChevronRight className="w-8 h-8" strokeWidth={3} />
+                <ChevronRight className="w-6 h-6" strokeWidth={3} />
               </button>
            </div>
         </div>

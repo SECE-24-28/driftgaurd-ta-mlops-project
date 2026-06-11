@@ -14,18 +14,18 @@ export function Problem() {
   ];
 
   return (
-    <section id="problem" className="py-24 px-4 bg-background border-b-4 border-foreground">
+    <section id="problem" className="py-16 px-4 bg-background border-b-4 border-foreground">
       <div className="container mx-auto">
-        <div className="text-center mb-16">
+        <div className="text-center mb-6">
           <div className="inline-block bg-red-500 text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg tracking-wider">
             The Danger Zone
           </div>
-          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter">
+          <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter">
             The Hidden Cost of <span className="text-red-500 glitch-text inline-block" data-text="Model Drift">Model Drift</span>
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
           {problems.map((problem, i) => (
             <motion.div
               key={i}
@@ -33,16 +33,16 @@ export function Problem() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.1 }}
-              className="bg-surface border-4 border-foreground p-6 brutal-shadow hover:-translate-y-2 transition-transform"
+              className="bg-surface border-4 border-foreground p-5 brutal-shadow hover:-translate-y-2 transition-transform"
             >
               <div className="flex items-center gap-4 mb-4">
                 <div className={`p-3 border-4 border-foreground bg-background ${problem.color}`}>
-                  <problem.icon strokeWidth={3} className="w-8 h-8" />
+                  <problem.icon strokeWidth={3} className="w-6 h-6" />
                 </div>
                 <h3 className="font-mono font-black text-xl uppercase leading-tight">{problem.title}</h3>
               </div>
               <div className="mt-4 pt-4 border-t-4 border-dashed border-foreground">
-                <div className="font-mono font-black text-3xl uppercase tracking-wider">{problem.stat}</div>
+                <div className="font-mono font-black text-xl uppercase tracking-wider">{problem.stat}</div>
               </div>
             </motion.div>
           ))}

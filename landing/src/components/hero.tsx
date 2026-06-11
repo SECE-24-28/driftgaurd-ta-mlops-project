@@ -12,18 +12,18 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="inline-block bg-accent text-background font-mono font-black px-4 py-2 border-2 border-foreground brutal-shadow-sm mb-6 uppercase tracking-wider">
+          <div className="inline-block bg-accent text-foreground font-mono font-black px-4 py-2 border-2 border-foreground brutal-shadow-sm mb-6 uppercase tracking-wider">
             MLOps Platform 2.0
           </div>
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-black uppercase leading-[1.1] tracking-tighter mb-6">
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-black uppercase leading-[1.1] tracking-tighter mb-4">
             Your AI Models Are <span className="text-primary glitch-text inline-block" data-text="Drifting">Drifting</span>.<br />
             We Stop Them.
           </h1>
-          <p className="text-lg md:text-xl font-mono mb-8 max-w-lg bg-surface p-4 border-l-4 border-primary">
+          <p className="text-lg md:text-xl font-mono mb-6 max-w-lg bg-surface p-4 border-l-4 border-primary">
             Continuously monitor production models, detect data drift, trigger retraining pipelines, validate challenger models, and safely deploy updates without manual intervention.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 font-mono font-black uppercase tracking-wider">
-            <button className="bg-primary text-background px-8 py-4 border-4 border-foreground brutal-button flex items-center justify-center gap-2 text-xl">
+            <button className="bg-primary text-foreground px-8 py-4 border-4 border-foreground brutal-button flex items-center justify-center gap-2 text-xl">
               Start Monitoring <ArrowRight className="w-6 h-6" strokeWidth={3} />
             </button>
             <button className="bg-background text-foreground px-8 py-4 border-4 border-foreground brutal-button flex items-center justify-center gap-2 text-xl hover:bg-surface">
@@ -39,7 +39,7 @@ export function Hero() {
           className="relative mt-12 lg:mt-0"
         >
           {/* Brutalist Dashboard Mockup */}
-          <div className="bg-surface border-4 border-foreground brutal-shadow p-6 relative z-10 w-full max-w-md mx-auto lg:max-w-none">
+          <div className="bg-surface border-4 border-foreground brutal-shadow p-5 relative z-10 w-full max-w-md mx-auto lg:max-w-none">
             <div className="flex items-center justify-between border-b-4 border-foreground pb-4 mb-6">
               <div className="font-mono font-black text-xl uppercase tracking-wider">Live Telemetry</div>
               <div className="flex gap-2">

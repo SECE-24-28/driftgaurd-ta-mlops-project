@@ -77,16 +77,16 @@ async def predict(data: dict):
   };
 
   return (
-    <section className="py-24 px-4 bg-background border-b-4 border-foreground">
+    <section className="py-16 px-4 bg-background border-b-4 border-foreground">
       <div className="container mx-auto grid lg:grid-cols-2 gap-12 items-center">
         <div>
-          <div className="inline-block bg-secondary text-background font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
+          <div className="inline-block bg-secondary text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
             Developer First
           </div>
-          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-6">
+          <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter mb-6">
             Built for <span className="text-secondary glitch-text inline-block" data-text="Engineers">Engineers</span>
           </h2>
-          <p className="text-lg md:text-xl font-mono mb-8 max-w-lg">
+          <p className="text-lg md:text-xl font-mono mb-6 max-w-lg">
             Integrate DriftGuard into your existing stack in minutes. Our Python SDK is designed to be completely unobtrusive to your actual inference code.
           </p>
 
@@ -97,7 +97,7 @@ async def predict(data: dict):
                 onClick={() => setActiveTab(tab.id)}
                 className={`text-left px-6 py-4 border-4 border-foreground transition-all flex items-center justify-between ${
                   activeTab === tab.id 
-                  ? 'bg-secondary text-background brutal-shadow translate-x-2' 
+                  ? 'bg-secondary text-foreground brutal-shadow translate-x-2' 
                   : 'bg-surface text-foreground hover:bg-background'
                 }`}
               >
@@ -127,7 +127,7 @@ async def predict(data: dict):
             </div>
           </div>
 
-          <div className="p-6 overflow-x-auto relative group">
+          <div className="p-5 overflow-x-auto relative group">
             <button 
               onClick={handleCopy}
               className="absolute top-4 right-4 p-2 bg-surface border-2 border-foreground brutal-button opacity-0 group-hover:opacity-100 transition-opacity"
