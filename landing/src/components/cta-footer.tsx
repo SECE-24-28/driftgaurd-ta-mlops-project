@@ -15,15 +15,15 @@ export function CTAFooter() {
             <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter text-background leading-[0.9] mb-6" style={{ textShadow: '4px 4px 0 #111' }}>
               Stop Losing <br/> Accuracy.
             </h2>
-            <p className="text-xl md:text-xl font-mono font-black uppercase bg-background text-foreground inline-block px-4 py-2 border-4 border-foreground brutal-shadow mb-6">
+            <p className="text-xl md:text-xl font-sans font-black uppercase bg-background text-foreground inline-block px-4 py-2 border-4 border-foreground brutal-shadow mb-6">
               Deploy DriftGuard. Keep your ML production-ready.
             </p>
             
             <div className="flex flex-col sm:flex-row justify-center gap-5">
-              <Link href="/dashboard" className="bg-primary text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-mono font-black text-xl uppercase tracking-wider">
+              <Link href="/dashboard" className="bg-primary text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-sans font-black text-xl uppercase tracking-wider">
                 Start Free <ArrowRight className="w-6 h-6" strokeWidth={4} />
               </Link>
-              <Link href="/contact" className="bg-background text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-mono font-black text-xl uppercase tracking-wider hover:bg-surface">
+              <Link href="/contact" className="bg-background text-foreground px-12 py-6 border-4 border-foreground brutal-button flex items-center justify-center gap-2 font-sans font-black text-xl uppercase tracking-wider hover:bg-surface">
                 Schedule Demo
               </Link>
             </div>
@@ -32,7 +32,7 @@ export function CTAFooter() {
 
       {/* Footer Section */}
       <footer className="bg-background border-t-8 border-foreground py-16 px-4">
-        <div className="container mx-auto grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-12 font-mono uppercase font-bold text-sm">
+        <div className="container mx-auto grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-12 font-sans uppercase font-bold text-sm">
           <div className="col-span-2 lg:col-span-2">
             <div className="flex items-center gap-2 mb-6">
               <div className="bg-primary p-2 border-2 border-foreground">
@@ -81,7 +81,7 @@ export function CTAFooter() {
           </div>
         </div>
 
-        <div className="container mx-auto mt-16 pt-8 border-t-4 border-dashed border-foreground flex flex-col md:flex-row items-center justify-between gap-4 font-mono font-bold text-muted-foreground text-xs uppercase">
+        <div className="container mx-auto mt-16 pt-8 border-t-4 border-dashed border-foreground flex flex-col md:flex-row items-center justify-between gap-4 font-sans font-bold text-muted-foreground text-xs uppercase">
           <div>© 2026 DriftGuard Inc. All rights reserved.</div>
           <div className="flex gap-5">
             <Link href="#" className="hover:text-primary">Privacy Policy</Link>

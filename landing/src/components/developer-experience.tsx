@@ -80,17 +80,17 @@ async def predict(data: dict):
     <section className="py-16 px-4 bg-background border-b-4 border-foreground">
       <div className="container mx-auto grid lg:grid-cols-2 gap-12 items-center">
         <div>
-          <div className="inline-block bg-secondary text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
+          <div className="inline-block bg-secondary text-foreground font-sans font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
             Developer First
           </div>
           <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter mb-6">
             Built for <span className="text-secondary glitch-text inline-block" data-text="Engineers">Engineers</span>
           </h2>
-          <p className="text-lg md:text-xl font-mono mb-6 max-w-lg">
+          <p className="text-lg md:text-xl font-sans mb-6 max-w-lg">
             Integrate DriftGuard into your existing stack in minutes. Our Python SDK is designed to be completely unobtrusive to your actual inference code.
           </p>
 
-          <div className="flex flex-col gap-4 font-mono font-bold uppercase w-full max-w-sm">
+          <div className="flex flex-col gap-4 font-sans font-bold uppercase w-full max-w-sm">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -122,7 +122,7 @@ async def predict(data: dict):
               <div className="w-3 h-3 bg-amber-500 border-2 border-foreground rounded-full"></div>
               <div className="w-3 h-3 bg-green-500 border-2 border-foreground rounded-full"></div>
             </div>
-            <div className="font-mono text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+            <div className="font-sans text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-2">
               <Terminal className="w-4 h-4" /> {activeTab}.py
             </div>
           </div>
@@ -135,7 +135,7 @@ async def predict(data: dict):
             >
               {copied ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5 text-foreground" />}
             </button>
-            <pre className="font-mono text-sm md:text-base leading-relaxed text-[#e6edf3]">
+            <pre className="font-sans text-sm md:text-base leading-relaxed text-[#e6edf3]">
               <code>
                 {codeSnippets[activeTab].split('\n').map((line, i) => (
                   <div key={i} className="flex">

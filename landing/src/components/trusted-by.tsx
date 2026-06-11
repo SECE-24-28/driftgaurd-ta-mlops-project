@@ -17,7 +17,7 @@ export function TrustedBy() {
       {/* Brutalist diagonal stripes background */}
       <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000), repeating-linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000)', backgroundPosition: '0 0, 10px 10px', backgroundSize: '20px 20px' }}></div>
       
-      <div className="font-mono font-black uppercase tracking-widest text-foreground mb-6 text-center px-4 relative z-10 text-xl border-b-4 border-background pb-2">
+      <div className="font-sans font-black uppercase tracking-widest text-foreground mb-6 text-center px-4 relative z-10 text-xl border-b-4 border-background pb-2">
         Trusted by teams across industries. Works with any ML model.
       </div>
       

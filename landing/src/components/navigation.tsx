@@ -36,11 +36,11 @@ export function Navigation() {
           <div className="bg-primary p-2 border-2 border-foreground group-hover:bg-accent transition-colors">
             <ShieldAlert className="w-6 h-6 text-foreground" strokeWidth={3} />
           </div>
-          <span className="font-mono font-black text-xl tracking-tighter uppercase">DriftGuard</span>
+          <span className="font-sans font-black text-xl tracking-tighter uppercase">DriftGuard</span>
         </Link>
 
         {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-5 font-mono font-bold uppercase tracking-wider">
+        <nav className="hidden md:flex items-center gap-5 font-sans font-bold uppercase tracking-wider">
           {navLinks.map((link) => (
             <Link key={link.name} href={link.href} className="hover:text-primary transition-colors hover:underline decoration-4 underline-offset-4">
               {link.name}
@@ -48,7 +48,7 @@ export function Navigation() {
           ))}
         </nav>
 
-        <div className="hidden md:flex items-center gap-4 font-mono font-black">
+        <div className="hidden md:flex items-center gap-4 font-sans font-black">
           <Link href="/login" className="hover:text-primary transition-colors uppercase px-4 py-2">
             Sign In
           </Link>
@@ -72,7 +72,7 @@ export function Navigation() {
       {/* Mobile Menu */}
       {mobileMenuOpen && (
         <div className="md:hidden absolute top-20 left-0 w-full bg-background border-b-4 border-primary brutal-shadow">
-          <div className="flex flex-col p-4 font-mono font-black text-xl tracking-wider">
+          <div className="flex flex-col p-4 font-sans font-black text-xl tracking-wider">
             {navLinks.map((link) => (
               <Link
                 key={link.name}

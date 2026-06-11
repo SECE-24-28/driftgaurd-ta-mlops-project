@@ -17,7 +17,7 @@ export function Architecture() {
     <section id="architecture" className="py-16 px-4 bg-surface border-b-4 border-foreground">
       <div className="container mx-auto">
         <div className="text-center mb-6">
-          <div className="inline-block bg-primary text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
+          <div className="inline-block bg-primary text-foreground font-sans font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
             Under the Hood
           </div>
           <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter">
@@ -43,7 +43,7 @@ export function Architecture() {
                 <div className="mb-4 flex justify-center">
                    <comp.icon strokeWidth={3} className={`w-10 h-10 ${comp.color} group-hover:scale-110 transition-transform`} />
                 </div>
-                <h3 className="font-mono font-black uppercase">{comp.name}</h3>
+                <h3 className="font-sans font-black uppercase">{comp.name}</h3>
               </motion.div>
             ))}
           </div>
@@ -71,7 +71,7 @@ export function Architecture() {
                 <div className="mb-4 flex justify-center">
                    <comp.icon strokeWidth={3} className={`w-10 h-10 ${comp.color} group-hover:scale-110 transition-transform`} />
                 </div>
-                <h3 className="font-mono font-black uppercase">{comp.name}</h3>
+                <h3 className="font-sans font-black uppercase">{comp.name}</h3>
               </motion.div>
             ))}
           </div>

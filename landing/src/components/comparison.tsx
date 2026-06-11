@@ -24,7 +24,7 @@ export function Comparison() {
         </div>
 
         <div className="overflow-x-auto bg-surface border-4 border-foreground brutal-shadow">
-          <table className="w-full text-left font-mono border-collapse">
+          <table className="w-full text-left font-sans border-collapse">
             <thead>
               <tr className="bg-background text-foreground text-xl uppercase">
                 <th className="p-5 border-b-4 border-r-4 border-foreground w-1/3">Feature</th>

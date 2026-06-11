@@ -12,17 +12,17 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="inline-block bg-accent text-foreground font-mono font-black px-4 py-2 border-2 border-foreground brutal-shadow-sm mb-6 uppercase tracking-wider">
+          <div className="inline-block bg-accent text-foreground font-sans font-black px-4 py-2 border-2 border-foreground brutal-shadow-sm mb-6 uppercase tracking-wider">
             MLOps Platform 2.0
           </div>
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-black uppercase leading-[1.1] tracking-tighter mb-4">
             Your AI Models Are <span className="text-primary glitch-text inline-block" data-text="Drifting">Drifting</span>.<br />
             We Stop Them.
           </h1>
-          <p className="text-lg md:text-xl font-mono mb-6 max-w-lg bg-surface p-4 border-l-4 border-primary">
+          <p className="text-lg md:text-xl font-sans mb-6 max-w-lg bg-surface p-4 border-l-4 border-primary">
             Continuously monitor production models, detect data drift, trigger retraining pipelines, validate challenger models, and safely deploy updates without manual intervention.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 font-mono font-black uppercase tracking-wider">
+          <div className="flex flex-col sm:flex-row gap-4 font-sans font-black uppercase tracking-wider">
             <button className="bg-primary text-foreground px-8 py-4 border-4 border-foreground brutal-button flex items-center justify-center gap-2 text-xl">
               Start Monitoring <ArrowRight className="w-6 h-6" strokeWidth={3} />
             </button>
@@ -41,7 +41,7 @@ export function Hero() {
           {/* Brutalist Dashboard Mockup */}
           <div className="bg-surface border-4 border-foreground brutal-shadow p-5 relative z-10 w-full max-w-md mx-auto lg:max-w-none">
             <div className="flex items-center justify-between border-b-4 border-foreground pb-4 mb-6">
-              <div className="font-mono font-black text-xl uppercase tracking-wider">Live Telemetry</div>
+              <div className="font-sans font-black text-xl uppercase tracking-wider">Live Telemetry</div>
               <div className="flex gap-2">
                 <div className="w-4 h-4 bg-primary border-2 border-foreground"></div>
                 <div className="w-4 h-4 bg-accent border-2 border-foreground"></div>
@@ -51,13 +51,13 @@ export function Hero() {
 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-background border-4 border-foreground p-4 brutal-shadow-sm hover:-translate-y-1 transition-transform">
-                <div className="flex items-center gap-2 font-mono font-bold uppercase mb-2">
+                <div className="flex items-center gap-2 font-sans font-bold uppercase mb-2">
                   <Activity className="w-5 h-5 text-primary" strokeWidth={3} /> Drift Score
                 </div>
                 <div className="text-4xl font-black text-primary glitch-text" data-text="0.84">0.84 <span className="text-sm text-foreground block mt-1">WARNING</span></div>
               </div>
               <div className="bg-background border-4 border-foreground p-4 brutal-shadow-sm hover:-translate-y-1 transition-transform">
-                <div className="flex items-center gap-2 font-mono font-bold uppercase mb-2">
+                <div className="flex items-center gap-2 font-sans font-bold uppercase mb-2">
                   <DatabaseZap className="w-5 h-5 text-accent" strokeWidth={3} /> Retraining
                 </div>
                 <div className="text-4xl font-black text-accent glitch-text" data-text="3">3 <span className="text-sm text-foreground block mt-1">ACTIVE JOBS</span></div>
@@ -69,10 +69,10 @@ export function Hero() {
                {[40, 70, 45, 90, 65, 80, 50, 85].map((h, i) => (
                  <div key={i} className="flex-1 bg-primary border-t-4 border-l-4 border-r-4 border-foreground hover:bg-accent transition-colors" style={{ height: `${h}%` }}></div>
                ))}
-               <div className="absolute top-4 left-4 font-mono font-black text-sm bg-foreground text-background px-3 py-1 uppercase tracking-widest border-2 border-background">ACCURACY TREND</div>
+               <div className="absolute top-4 left-4 font-sans font-black text-sm bg-foreground text-background px-3 py-1 uppercase tracking-widest border-2 border-background">ACCURACY TREND</div>
             </div>
             
-            <div className="mt-6 flex items-start gap-3 bg-secondary/20 text-foreground font-mono font-bold p-4 border-4 border-secondary brutal-shadow-sm">
+            <div className="mt-6 flex items-start gap-3 bg-secondary/20 text-foreground font-sans font-bold p-4 border-4 border-secondary brutal-shadow-sm">
               <ShieldCheck className="w-6 h-6 text-secondary shrink-0 mt-1" strokeWidth={3} />
               <div>
                 <div className="text-secondary uppercase mb-1">System Update</div>

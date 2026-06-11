@@ -17,7 +17,7 @@ export function Problem() {
     <section id="problem" className="py-16 px-4 bg-background border-b-4 border-foreground">
       <div className="container mx-auto">
         <div className="text-center mb-6">
-          <div className="inline-block bg-red-500 text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg tracking-wider">
+          <div className="inline-block bg-red-500 text-foreground font-sans font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg tracking-wider">
             The Danger Zone
           </div>
           <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter">
@@ -39,10 +39,10 @@ export function Problem() {
                 <div className={`p-3 border-4 border-foreground bg-background ${problem.color}`}>
                   <problem.icon strokeWidth={3} className="w-6 h-6" />
                 </div>
-                <h3 className="font-mono font-black text-xl uppercase leading-tight">{problem.title}</h3>
+                <h3 className="font-sans font-black text-xl uppercase leading-tight">{problem.title}</h3>
               </div>
               <div className="mt-4 pt-4 border-t-4 border-dashed border-foreground">
-                <div className="font-mono font-black text-xl uppercase tracking-wider">{problem.stat}</div>
+                <div className="font-sans font-black text-xl uppercase tracking-wider">{problem.stat}</div>
               </div>
             </motion.div>
           ))}

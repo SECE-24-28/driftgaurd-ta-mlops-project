@@ -16,7 +16,7 @@ export function ProductionReadiness() {
     <section className="py-16 px-4 bg-background border-b-4 border-foreground">
       <div className="container mx-auto">
         <div className="text-center mb-6">
-          <div className="inline-block bg-green-500 text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
+          <div className="inline-block bg-green-500 text-foreground font-sans font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
             Enterprise Grade
           </div>
           <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter">
@@ -34,10 +34,10 @@ export function ProductionReadiness() {
               transition={{ delay: i * 0.1 }}
               className="border-4 border-foreground bg-background p-5 text-center brutal-shadow hover:-translate-y-2 transition-transform flex flex-col items-center justify-center aspect-square"
             >
-              <div className={`font-mono font-black text-4xl md:text-5xl mb-4 px-4 py-2 border-4 border-foreground brutal-shadow-sm ${metric.highlight}`}>
+              <div className={`font-sans font-black text-4xl md:text-5xl mb-4 px-4 py-2 border-4 border-foreground brutal-shadow-sm ${metric.highlight}`}>
                 {metric.value}
               </div>
-              <div className="font-mono font-bold uppercase text-lg md:text-xl">
+              <div className="font-sans font-bold uppercase text-lg md:text-xl">
                 {metric.label}
               </div>
             </motion.div>

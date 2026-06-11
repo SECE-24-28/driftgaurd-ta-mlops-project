@@ -57,12 +57,12 @@ export function Testimonials() {
                transition={{ duration: 0.3 }}
                className="text-center"
              >
-                <p className="font-mono font-black text-xl md:text-3xl uppercase leading-tight mb-6">
+                <p className="font-sans font-black text-xl md:text-3xl uppercase leading-tight mb-6">
                   "{testimonials[currentIndex].quote}"
                 </p>
                 <div className="inline-block p-4 border-4 border-foreground bg-background brutal-shadow-sm">
                    <div className="font-black text-xl uppercase mb-1">{testimonials[currentIndex].author}</div>
-                   <div className="font-mono font-bold text-muted-foreground uppercase text-sm">
+                   <div className="font-sans font-bold text-muted-foreground uppercase text-sm">
                      {testimonials[currentIndex].role} @ {testimonials[currentIndex].company}
                    </div>
                 </div>

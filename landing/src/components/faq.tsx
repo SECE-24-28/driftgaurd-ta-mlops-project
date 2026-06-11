@@ -34,7 +34,7 @@ export function FAQ() {
     <section className="py-16 px-4 bg-primary/20 border-b-4 border-foreground">
       <div className="container mx-auto max-w-3xl">
         <div className="text-center mb-6">
-          <div className="inline-block bg-background text-foreground font-mono font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
+          <div className="inline-block bg-background text-foreground font-sans font-black px-4 py-1 border-4 border-foreground brutal-shadow-sm mb-4 uppercase text-lg">
             Got Questions?
           </div>
           <h2 className="text-xl md:text-5xl font-black uppercase tracking-tighter">
@@ -46,7 +46,7 @@ export function FAQ() {
           {faqs.map((faq, i) => (
             <div key={i} className="border-4 border-foreground bg-background brutal-shadow-sm overflow-hidden">
               <button
-                className={`w-full p-5 text-left flex items-center justify-between font-mono font-black uppercase text-xl transition-colors ${openIndex === i ? 'bg-primary text-foreground' : 'hover:bg-surface'}`}
+                className={`w-full p-5 text-left flex items-center justify-between font-sans font-black uppercase text-xl transition-colors ${openIndex === i ? 'bg-primary text-foreground' : 'hover:bg-surface'}`}
                 onClick={() => setOpenIndex(openIndex === i ? null : i)}
               >
                 <span className="pr-8">{faq.q}</span>
@@ -63,7 +63,7 @@ export function FAQ() {
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden bg-surface"
                   >
-                    <div className="p-5 font-mono font-bold text-lg text-foreground border-t-4 border-foreground border-dashed">
+                    <div className="p-5 font-sans font-bold text-lg text-foreground border-t-4 border-foreground border-dashed">
                       {faq.a}
                     </div>
                   </motion.div>
