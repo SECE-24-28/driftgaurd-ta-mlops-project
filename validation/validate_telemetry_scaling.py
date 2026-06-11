@@ -36,6 +36,7 @@ def main():
     api_url = f"http://127.0.0.1:{port}"
     db_file = "driftguard_metadata.db"
     ts = int(time.time())
+    dg = None
     
     # Start isolated FastAPI server
     env = os.environ.copy()
@@ -185,6 +186,11 @@ def main():
             sys.exit(1)
             
     finally:
+        if dg is not None:
+            try:
+                dg.shutdown()
+            except Exception as e:
+                print(f"Error shutting down DriftGuard: {e}")
         server_process.terminate()
         server_process.wait()
         try:
