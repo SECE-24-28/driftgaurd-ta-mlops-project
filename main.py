@@ -42,7 +42,7 @@ try:
         pass
     print("DriftGuard connected to PostgreSQL Database.")
 except Exception:
-    local_db_path = os.path.abspath("driftguard_metadata.db")
+    local_db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "driftguard_metadata.db"))
     db_url = f"sqlite:///{local_db_path}"
     engine = create_engine(db_url, connect_args={"check_same_thread": False}, poolclass=NullPool)
     print(f"DriftGuard connected to Local SQLite Database at: {local_db_path}")
@@ -428,6 +428,17 @@ def get_current_user(request: Request) -> DBUser:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return request.state.user
 
+def verify_model_access(db: Session, current_user: DBUser, model_id: str, allow_missing: bool = False) -> Optional[DBModel]:
+    models = db.query(DBModel).filter(DBModel.model_id == model_id).all()
+    if not models:
+        if allow_missing:
+            return None
+        raise HTTPException(status_code=404, detail="Model not registered.")
+    user_model = next((m for m in models if m.owner_id == current_user.id), None)
+    if not user_model:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
+    return user_model
+
 # ----------------------------------------------------
 # API ENDPOINTS
 # ----------------------------------------------------
@@ -588,7 +599,7 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
     Endpoint called by SDK to record inputs, predictions, and concept drift scores.
     Updates active Prometheus scrapers.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
+    model = verify_model_access(db, current_user, model_id, allow_missing=True)
     project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
     print("PROJECT =", project.name if project else None)
     print("MODEL =", model.model_id if model else None)
@@ -690,9 +701,7 @@ def get_drift_metrics(model_id: str, current_user: DBUser = Depends(get_current_
     """
     Fetches drift metrics history for Recharts visualization.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
     logs = db.query(DBPredictionLog)\
              .filter(DBPredictionLog.model_id == model_id, DBPredictionLog.project_id == model.project_id)\
              .order_by(DBPredictionLog.timestamp.desc())\
@@ -768,12 +777,7 @@ def get_model_details(model_id: str, current_user: DBUser = Depends(get_current_
     Get all fields of a specific model by ID.
     """
     check_and_recover_all_stale_jobs_for_user(current_user.id, db)
-    model = db.query(DBModel).filter(
-        DBModel.model_id == model_id,
-        DBModel.owner_id == current_user.id
-    ).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
     return {
         "model_id": model.model_id,
         "drift_threshold": model.drift_threshold,
@@ -790,9 +794,7 @@ def get_model_versions(model_id: str, current_user: DBUser = Depends(get_current
     """
     Retrieves the complete registered version history for a given model.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
 
     versions = db.query(DBModelVersion)\
                  .filter(DBModelVersion.model_id == model_id, DBModelVersion.project_id == model.project_id)\
@@ -811,9 +813,7 @@ def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DB
     """
     Emergency rollback target version to champion, archiving current champion.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
         
     # Locate target version in model registry
     target_ver = db.query(DBModelVersion).filter(
@@ -911,9 +911,7 @@ def get_retraining_history(model_id: str, current_user: DBUser = Depends(get_cur
     """
     Exposes full retraining executions details.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
 
     events = db.query(DBRetrainingEvent)\
                .filter(DBRetrainingEvent.model_id == model_id, DBRetrainingEvent.project_id == model.project_id)\
@@ -954,9 +952,7 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
     """
     Returns structured audit entries.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
 
     logs = db.query(DBAuditLogEntry)\
              .filter(DBAuditLogEntry.model_id == model_id, DBAuditLogEntry.project_id == model.project_id)\
@@ -1031,13 +1027,14 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
     check_and_recover_all_stale_jobs_for_user(current_user.id, db)
 
     # 2. Acquire row lock (with_for_update) to resolve concurrent retraining races
-    model = db.query(DBModel).filter(
-        DBModel.model_id == model_id,
-        DBModel.owner_id == current_user.id
-    ).with_for_update().first()
-
-    if not model:
+    models = db.query(DBModel).filter(
+        DBModel.model_id == model_id
+    ).with_for_update().all()
+    if not models:
         raise HTTPException(status_code=404, detail="Model not registered.")
+    model = next((m for m in models if m.owner_id == current_user.id), None)
+    if not model:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this model.")
 
     if model.status == "retraining":
         return {"status": "already_running", "message": "Retraining is currently running."}
@@ -1089,9 +1086,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
     local pipeline finishes. Updates model record, audit log, Prometheus
     metrics, and Slack alerts.
     """
-    model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not registered.")
+    model = verify_model_access(db, current_user, model_id)
 
     # Locate the event record
     event = None
