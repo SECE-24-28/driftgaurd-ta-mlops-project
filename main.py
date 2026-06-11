@@ -47,6 +47,21 @@ except Exception:
     engine = create_engine(db_url, connect_args={"check_same_thread": False}, poolclass=NullPool)
     print(f"DriftGuard connected to Local SQLite Database at: {local_db_path}")
 
+# Configure SQLite parameters for production concurrency
+from sqlalchemy import event
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    if "sqlite" in db_url:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=10000")
+        except Exception as e:
+            print(f"[SQLite Pragma] Warning setting WAL: {e}")
+        finally:
+            cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -151,8 +166,9 @@ try:
     from sqlalchemy import inspect, text
     inspector = inspect(engine)
     
-    # 1. Inspect existing dg_models table to see if it needs composite primary key migration
+    # 1. Inspect existing tables
     has_models_table = inspector.has_table("dg_models")
+    has_old_table = inspector.has_table("dg_models_old")
     needs_composite_migration = False
     
     if has_models_table:
@@ -160,7 +176,15 @@ try:
         pk_cols = pk_constraint.get("constrained_columns", [])
         if len(pk_cols) == 1 and "project_id" not in pk_cols:
             needs_composite_migration = True
+            
     with engine.begin() as conn:
+        # Drop old conflicting index on dg_models_old if it exists
+        if has_old_table:
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS ix_dg_models_model_id;"))
+            except Exception as index_err:
+                print(f"[Migration] Warning dropping leftover index: {index_err}")
+                
         # 2. If dg_models has single-column PK, rename it so Base.metadata.create_all creates the new composite key version
         if needs_composite_migration:
             print("[Migration] Renaming old single-key dg_models to dg_models_old for composite key migration...")
@@ -169,21 +193,25 @@ try:
             except Exception as index_err:
                 print(f"[Migration] Warning dropping index: {index_err}")
             conn.execute(text("ALTER TABLE dg_models RENAME TO dg_models_old;"))
+            has_old_table = True
             
     # 3. Create all tables (will create new dg_models and create new tables if missing)
     Base.metadata.create_all(bind=engine)
     
     with engine.begin() as conn:
-        # 4. If we renamed old dg_models, copy over the data to the newly created composite-key version
-        if needs_composite_migration:
+        # 4. If we have dg_models_old, copy over the data to the newly created composite-key version
+        if has_old_table:
             print("[Migration] Copying data from dg_models_old to dg_models composite-key table...")
-            conn.execute(text("""
-                INSERT INTO dg_models (model_id, project_id, owner_id, drift_threshold, status, accuracy, version, features_json, reference_data_path, created_at)
-                SELECT model_id, COALESCE(project_id, 1), owner_id, drift_threshold, status, accuracy, version, features_json, reference_data_path, created_at
-                FROM dg_models_old;
-            """))
-            conn.execute(text("DROP TABLE dg_models_old;"))
-            print("[Migration] dg_models composite key migration completed successfully.")
+            try:
+                conn.execute(text("""
+                    INSERT OR IGNORE INTO dg_models (model_id, project_id, owner_id, drift_threshold, status, accuracy, version, features_json, reference_data_path, created_at)
+                    SELECT model_id, COALESCE(project_id, 1), owner_id, drift_threshold, status, accuracy, version, features_json, reference_data_path, created_at
+                    FROM dg_models_old;
+                """))
+                conn.execute(text("DROP TABLE dg_models_old;"))
+                print("[Migration] dg_models composite key migration completed successfully.")
+            except Exception as copy_err:
+                print(f"[Migration] Error completing copy from dg_models_old: {copy_err}")
             
         # 5. Check and append project_id / last_heartbeat columns for event log tables
         for table_name in ["dg_predictions", "dg_retraining_events", "dg_audit_logs", "dg_model_versions"]:
@@ -278,6 +306,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"[ERROR] Global Exception Caught: {exc}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "exception": str(exc)}
+    )
+
 # Enable CORS for dashboard queries
 app.add_middleware(
     CORSMiddleware,
@@ -361,7 +401,9 @@ async def api_key_auth_middleware(request: Request, call_next):
 
     # Get API key header
     api_key = request.headers.get("X-API-Key")
+    print("API KEY RECEIVED =", api_key)
     if not api_key:
+        print("AUTH RESULT = Failed: Missing X-API-Key header")
         return Response(content="Unauthorized: Missing X-API-Key header", status_code=401)
 
     # Hash the key
@@ -371,7 +413,9 @@ async def api_key_auth_middleware(request: Request, call_next):
     db = SessionLocal()
     try:
         user = db.query(DBUser).filter(DBUser.api_key_hash == api_key_hash, DBUser.is_active == True).first()
+        print("USER =", user.email if user else None)
         if not user:
+            print("AUTH RESULT = Failed: Invalid API Key")
             return Response(content="Unauthorized: Invalid API Key", status_code=401)
         request.state.user = user
     finally:
@@ -545,9 +589,12 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
     Updates active Prometheus scrapers.
     """
     model = db.query(DBModel).filter(DBModel.model_id == model_id, DBModel.owner_id == current_user.id).first()
+    project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
+    print("PROJECT =", project.name if project else None)
+    print("MODEL =", model.model_id if model else None)
+    print("AUTH RESULT = Success")
     if not model:
         # Get or create a default project for this user
-        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
         if not project:
             project = DBProject(name="Default Project", owner_id=current_user.id)
             db.add(project)
@@ -582,8 +629,19 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
         prediction_json=json.dumps(req.prediction),
         drift_score=req.drift_score
     )
-    db.add(log_entry)
-    db.commit()
+    t0 = time.time()
+    try:
+        db.add(log_entry)
+        db.commit()
+    except Exception as db_err:
+        import traceback
+        print(f"[SQLAlchemy Error] Failed to commit telemetry log for {model_id}: {db_err}")
+        traceback.print_exc()
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database write failed: {db_err}")
+    finally:
+        latency = (time.time() - t0) * 1000
+        print(f"[Telemetry Timing] DB Commit for {model_id} took {latency:.2f} ms")
 
     # 1. Update Prometheus metrics
     predictions_counter.labels(model_id=model_id).inc()
