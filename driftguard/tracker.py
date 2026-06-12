@@ -30,7 +30,9 @@ class DriftGuard:
         api_key: str = None,
         project_id: int = None,
         drift_threshold: float = None,
-        auto_retrain: bool = True
+        auto_retrain: bool = True,
+        accuracy: float = None,
+        version: str = "1.0.0"
     ):
         """
         Initialize the DriftGuard tracker.
@@ -52,6 +54,8 @@ class DriftGuard:
         self.project_id = project_id if project_id is not None else (int(proj_env) if proj_env else None)
         self.drift_threshold = drift_threshold if drift_threshold is not None else settings.DRIFT_THRESHOLD
         self.auto_retrain = auto_retrain
+        self.accuracy = accuracy
+        self.version = version
 
         # Drift detector — initialized lazily on first predict call
         self.drift_detector = None
@@ -114,8 +118,8 @@ class DriftGuard:
             "model_id": self.model_id,
             "project_id": self.project_id,
             "drift_threshold": self.drift_threshold,
-            "version": "1.0.0",
-            "accuracy": 0.85,
+            "version": self.version,
+            "accuracy": self.accuracy,
             "features": feature_names
         }
         try:

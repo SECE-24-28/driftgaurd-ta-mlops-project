@@ -103,7 +103,7 @@ class DBModel(Base):
     owner_id = Column(Integer, ForeignKey("dg_users.id"), nullable=True)
     drift_threshold = Column(Float, default=0.15)
     status = Column(String(50), default="healthy") # healthy, degraded, retraining
-    accuracy = Column(Float, default=0.85)
+    accuracy = Column(Float, nullable=True)
     version = Column(String(50), default="1.0.0")
     features_json = Column(Text, default="[]")
     reference_data_path = Column(String(255), default="")
@@ -160,7 +160,7 @@ class DBModelVersion(Base):
     model_id = Column(String(100), index=True)
     version = Column(String(50), index=True)
     status = Column(String(50))  # champion, candidate, archived, rolled_back
-    accuracy = Column(Float)
+    accuracy = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
 # ----------------------------------------------------
@@ -347,12 +347,14 @@ class RegisterModelRequest(BaseModel):
     drift_threshold: float = Field(0.15, example=0.15)
     reference_data_path: str = Field("", example="./data/baseline.parquet")
     features: List[str] = Field(default_factory=list, example=["amount", "location_score", "velocity"])
+    accuracy: Optional[float] = Field(default=None, example=0.85)
+    version: Optional[str] = Field(default="1.0.0", example="1.0.0")
 
 class ExplicitRegisterModelRequest(BaseModel):
     model_id: str = Field(..., example="fraud-detector-v1")
     project_id: Optional[int] = Field(default=None, example=1)
     drift_threshold: float = Field(0.15, example=0.37)
-    accuracy: float = Field(0.85, example=0.94)
+    accuracy: Optional[float] = Field(default=None, example=0.94)
     version: str = Field("1.0.0", example="1.0.0")
     features: List[str] = Field(default_factory=list, example=["feature_1", "feature_2"])
 
@@ -587,8 +589,8 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
         owner_id=current_user.id,
         drift_threshold=req.drift_threshold,
         status="healthy",
-        accuracy=0.85,
-        version="1.0.0",
+        accuracy=req.accuracy,
+        version=req.version,
         features_json=json.dumps(req.features),
         reference_data_path=req.reference_data_path
     )
@@ -598,9 +600,9 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
     init_version = DBModelVersion(
         project_id=proj_id,
         model_id=req.model_id,
-        version="1.0.0",
+        version=req.version,
         status="champion",
-        accuracy=0.85
+        accuracy=req.accuracy
     )
     db.add(init_version)
     db.commit()
@@ -614,16 +616,17 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
         _server_root = os.path.dirname(os.path.abspath(__file__))
         _art_dir = os.path.join(_server_root, "artifacts", str(proj_id), req.model_id)
         os.makedirs(_art_dir, exist_ok=True)
-        _art_path = os.path.join(_art_dir, "version_1.0.0.pkl")
+        _art_path = os.path.join(_art_dir, f"version_{req.version}.pkl")
         if not os.path.exists(_art_path):
             # Write a lightweight sentinel so rollback endpoint can validate the file
-            _joblib.dump({"model_id": req.model_id, "version": "1.0.0", "placeholder": True}, _art_path)
+            _joblib.dump({"model_id": req.model_id, "version": req.version, "placeholder": True}, _art_path)
             print(f"[Register] Wrote initial artifact placeholder to {_art_path}")
     except Exception as _art_err:
-        print(f"[Register] Warning: Could not write v1.0.0 artifact placeholder: {_art_err}")
+        print(f"[Register] Warning: Could not write v{req.version} artifact placeholder: {_art_err}")
     
     # Initialize metrics
-    accuracy_gauge.labels(model_id=req.model_id, version="1.0.0").set(0.85)
+    if req.accuracy is not None:
+        accuracy_gauge.labels(model_id=req.model_id, version=req.version).set(req.accuracy)
     
     return {"status": "registered", "model_id": req.model_id}
 
@@ -690,7 +693,8 @@ def register_model_explicit(req: ExplicitRegisterModelRequest, current_user: DBU
         print(f"[Register] Warning: Could not write {req.version} artifact placeholder: {_art_err}")
 
     # Initialize Prometheus metrics
-    accuracy_gauge.labels(model_id=req.model_id, version=req.version).set(req.accuracy)
+    if req.accuracy is not None:
+        accuracy_gauge.labels(model_id=req.model_id, version=req.version).set(req.accuracy)
 
     return {"status": "registered", "model_id": req.model_id}
 
@@ -1349,21 +1353,32 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
         db.commit()
 
         # Send alert
+        _acc_str = f"{model.accuracy:.4f}" if model.accuracy is not None else "N/A"
         send_alert(
             event_type="retrain_triggered",
             message=f"Retraining pipeline started for model '{model_id}'",
-            details={"triggered_by": triggered_by, "baseline_accuracy": f"{model.accuracy:.4f}"}
+            details={"triggered_by": triggered_by, "baseline_accuracy": _acc_str}
         )
 
-        # 2. Run the pipeline flow steps
-        # Attempt to dynamically import pipeline code to decouple dependencies at runtime
-        # (This is standard practice for large Python system gateways that need clean module sandboxes)
+        # 2. Resolve champion artifact path from the artifact store
+        _server_root = os.path.dirname(os.path.abspath(__file__))
+        _champion_artifact_path = os.path.join(
+            _server_root, "artifacts",
+            str(model.project_id),
+            model_id,
+            f"version_{model.version}.pkl"
+        )
+        print(f"[{model_id}] Champion artifact resolved to: {_champion_artifact_path}")
+
+        # 3. Run the pipeline flow steps
         try:
             from pipeline.retrain_pipeline import run_retraining_flow
             pipeline_results = run_retraining_flow(
                 model_id=model_id,
                 current_accuracy=model.accuracy,
-                current_version=model.version
+                current_version=model.version,
+                project_id=model.project_id,
+                artifact_path=_champion_artifact_path
             )
         except Exception as pi_err:
             print(f"Pipeline flow execution failed: {pi_err}")
@@ -1450,9 +1465,14 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
                 event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
                 event.details_json = json.dumps({
                     "error": pipeline_results.get("error", "Validation failed"),
-                    "message": "Model challenger rejected because it did not beat production champion by 1% on primary metric."
+                    "champion_accuracy": pipeline_results.get("champion_accuracy", model.accuracy),
+                    "challenger_accuracy": pipeline_results.get("new_accuracy"),
+                    "threshold": 0.01,
+                    "comparison_method": pipeline_results.get("comparison_method", "unknown"),
+                    "promotion_outcome": "rejected",
+                    "message": pipeline_results.get("error", "Challenger did not beat champion by ≥1%."),
                 })
-            
+
             # Write Fail Audit Log
             audit_fail = DBAuditLogEntry(
                 project_id=model.project_id,
@@ -1462,23 +1482,29 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
                 drift_score=drift_score,
                 triggered_by="automatic" if triggered_by == "automatic" else "manual",
                 details_json=json.dumps({
-                    "message": f"Challenger model rejected. Did not meet >1% relative accuracy increase standard.",
+                    "message": pipeline_results.get("error", "Challenger rejected."),
+                    "champion_accuracy": pipeline_results.get("champion_accuracy", model.accuracy),
                     "challenger_accuracy": pipeline_results.get("new_accuracy", 0.0),
-                    "champion_accuracy": model.accuracy
+                    "threshold": 0.01,
+                    "comparison_method": pipeline_results.get("comparison_method", "unknown"),
+                    "promotion_outcome": "rejected",
                 })
             )
             db.add(audit_fail)
             db.commit()
 
             # Send failure Alert
+            _champ_acc = pipeline_results.get("champion_accuracy", model.accuracy)
+            _chall_acc = pipeline_results.get("new_accuracy", 0.0)
             send_alert(
                 event_type="validation_failed",
                 message=f"Model validation failed for challenger. Retaining champion '{model.version}'.",
                 details={
                     "model_id": model_id,
                     "champion_version": model.version,
-                    "challenger_accuracy": f"{pipeline_results.get('new_accuracy', 0.0):.4f}",
-                    "champion_accuracy": f"{model.accuracy:.4f}"
+                    "champion_accuracy": f"{_champ_acc:.4f}" if _champ_acc is not None else "N/A",
+                    "challenger_accuracy": f"{_chall_acc:.4f}",
+                    "comparison_method": pipeline_results.get("comparison_method", "unknown"),
                 }
             )
 

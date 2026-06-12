@@ -354,60 +354,110 @@ def generate_governance_report(
 # MAIN PREFECT FLOW EXECUTION
 # ----------------------------------------------------
 @flow(name="DriftGuard Retraining Flow")
-def run_retraining_flow(model_id: str, current_accuracy: float, current_version: str) -> Dict[str, Any]:
+def run_retraining_flow(
+    model_id: str,
+    current_accuracy: float,
+    current_version: str,
+    project_id: int = 1,
+    artifact_path: str = None
+) -> Dict[str, Any]:
     """
     Main orchestrator flow invoked by FastAPI.
-    Runs validation, retraining, validation vs champion, and canary deployment.
+
+    Promotion decision uses the REAL production champion:
+    - Loads the registered champion artifact from disk (artifact_path).
+    - If artifact is a placeholder sentinel or cannot be loaded, falls back to
+      a metric-only comparison against current_accuracy.
+    - Challenger is trained on the server-side demo dataset (breast cancer).
+      For production use, register @dg.retrainer in the SDK instead.
     """
+    _acc_display = f"{current_accuracy:.4f}" if current_accuracy is not None else "N/A"
     logger.info(f"--- Starting Autonomous Retraining Flow for model '{model_id}' ---")
-    logger.warning(
-        f"[{model_id}] SERVER-SIDE DEMO PIPELINE activated. "
-        "This pipeline uses the scikit-learn breast cancer dataset as demo training data. "
-        "It does NOT use production telemetry or user-supplied datasets. "
-        "Register @dg.retrainer in your SDK client to supply your own trusted training data."
+    logger.info(
+        f"[{model_id}] Champion metadata: version={current_version}, accuracy={_acc_display}"
     )
 
-    # Step 1: Ingestion & GE Data Validation
-    # Load demo dataset (see data_ingestion_step docstring for why)
+    # ---------------------------------------------------------------
+    # Step 1: Data ingestion + Great Expectations validation
+    # NOTE: Server-side demo pipeline uses breast cancer dataset.
+    # Register @dg.retrainer in SDK to supply your own training data.
+    # ---------------------------------------------------------------
     from sklearn.datasets import load_breast_cancer
     data = load_breast_cancer()
     df = pd.DataFrame(data.data, columns=[f"feature_{i}" for i in range(data.data.shape[1])])
     df["target"] = data.target
-    
+
     validation_passed = validate_data_with_ge(df)
     if not validation_passed:
-        # Halt pipeline immediately
-        from governance.audit_log import write_audit_entry
-        write_audit_entry(
-            model_id=model_id,
-            event_type="validation_failed",
-            model_version=current_version,
-            drift_score=0.25,
-            triggered_by="automatic",
-            details={"error": "Great Expectations data validation failed."}
-        )
+        try:
+            from governance.audit_log import write_audit_entry
+            write_audit_entry(
+                model_id=model_id,
+                event_type="validation_failed",
+                model_version=current_version,
+                drift_score=0.0,
+                triggered_by="automatic",
+                details={"error": "Great Expectations data validation failed."}
+            )
+        except Exception:
+            pass
         send_alert(
             event_type="validation_failed",
-            message=f"Retraining pipeline ABORTED for '{model_id}' because new data failed Great Expectations validation!",
+            message=f"Retraining ABORTED for '{model_id}': data validation failed.",
             details={"model_id": model_id}
         )
         return {"success": False, "error": "Great Expectations validation failed."}
 
-    # Step 2: Feast freshness checks
+    # Step 2: Feature freshness
     check_feature_freshness()
 
-    # Split dataset
+    # Split challenger training/validation sets
     from sklearn.model_selection import train_test_split
     X = df.drop(columns=["target"]).values
     y = df["target"].values
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Train a champion-like baseline model to use inside validation
-    from sklearn.ensemble import RandomForestClassifier
-    champion_model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=1)
-    champion_model.fit(X_train, y_train)
+    # ---------------------------------------------------------------
+    # Step 3: Load REAL production champion from artifact store
+    # ---------------------------------------------------------------
+    champion_model = None
+    champion_loaded_from_artifact = False
 
-    # Step 3: Model retraining and telemetry logging
+    if artifact_path and os.path.exists(artifact_path):
+        try:
+            import joblib as _joblib
+            loaded = _joblib.load(artifact_path)
+            # Reject placeholder sentinels written at registration time
+            if isinstance(loaded, dict) and loaded.get("placeholder"):
+                logger.info(
+                    f"[{model_id}] Champion artifact at '{artifact_path}' is a registration "
+                    "placeholder — no real model persisted yet. Falling back to metric comparison."
+                )
+            elif hasattr(loaded, "predict"):
+                champion_model = loaded
+                champion_loaded_from_artifact = True
+                logger.info(
+                    f"[{model_id}] Loaded real champion artifact from '{artifact_path}'."
+                )
+            else:
+                logger.warning(
+                    f"[{model_id}] Artifact at '{artifact_path}' has no predict() method "
+                    f"(type={type(loaded).__name__}). Falling back to metric comparison."
+                )
+        except Exception as e:
+            logger.warning(
+                f"[{model_id}] Could not load champion artifact from '{artifact_path}': {e}. "
+                "Falling back to metric comparison."
+            )
+    else:
+        logger.info(
+            f"[{model_id}] No artifact path provided or file not found. "
+            "Will compare challenger metric against registered champion accuracy."
+        )
+
+    # ---------------------------------------------------------------
+    # Step 4: Train challenger model
+    # ---------------------------------------------------------------
     challenger_model, train_res = retrain_model_with_tracking(
         model_id=model_id,
         X_train=X_train,
@@ -417,50 +467,103 @@ def run_retraining_flow(model_id: str, current_accuracy: float, current_version:
         current_version=current_version
     )
 
-    # Step 4: Model validation (validate new model vs champion)
-    # The challenger must beat champion by at least 1% relative to proceed
-    val_passed, champ_score, chall_score = validate_challenger_vs_champion(
-        champion_model=champion_model,
-        challenger_model=challenger_model,
-        val_features=X_val,
-        val_labels=y_val,
-        threshold_pct=0.01  # 1%
-    )
-    
+    chall_score = train_res["new_accuracy"]
+
+    # ---------------------------------------------------------------
+    # Step 5: Promotion decision
+    # ---------------------------------------------------------------
+    PROMOTION_THRESHOLD = 0.01  # challenger must beat champion by ≥1%
+
+    if champion_loaded_from_artifact:
+        # Real model vs real model comparison on the same evaluation set
+        logger.info(f"[{model_id}] Comparing challenger against REAL champion artifact.")
+        val_passed, champ_score, chall_score = validate_challenger_vs_champion(
+            champion_model=champion_model,
+            challenger_model=challenger_model,
+            val_features=X_val,
+            val_labels=y_val,
+            threshold_pct=PROMOTION_THRESHOLD
+        )
+        comparison_method = "artifact"
+    else:
+        # Metric-only comparison: challenger evaluated on val set vs registered accuracy
+        from sklearn.metrics import accuracy_score as _acc_score
+        try:
+            chall_preds = challenger_model.predict(X_val)
+            chall_score = float(_acc_score(y_val, chall_preds))
+        except Exception as e:
+            logger.error(f"[{model_id}] Failed to evaluate challenger: {e}")
+            return {
+                "success": False,
+                "validation_passed": False,
+                "error": f"Challenger evaluation failed: {e}"
+            }
+
+        # Use registered champion accuracy as the baseline metric
+        champ_score = current_accuracy if current_accuracy is not None else 0.0
+        score_diff = chall_score - champ_score
+        val_passed = score_diff >= PROMOTION_THRESHOLD
+        comparison_method = "metric"
+
+        logger.info(
+            f"[{model_id}] Metric comparison — "
+            f"champion={champ_score:.4f} (registered) | "
+            f"challenger={chall_score:.4f} (evaluated) | "
+            f"diff={score_diff:+.4f} | "
+            f"threshold={PROMOTION_THRESHOLD:.4f} | "
+            f"passed={val_passed}"
+        )
+
     if not val_passed:
-        logger.warning("Retrained challenger failed to outperform champion by 1%. Aborting promotion.")
+        reason = (
+            f"Challenger accuracy {chall_score:.4f} did not beat "
+            f"champion {champ_score:.4f} by ≥{PROMOTION_THRESHOLD*100:.0f}% "
+            f"(comparison_method={comparison_method})."
+        )
+        logger.warning(f"[{model_id}] Promotion REJECTED — {reason}")
         return {
             "success": True,
             "validation_passed": False,
+            "champion_accuracy": champ_score,
             "new_accuracy": chall_score,
             "new_version": train_res["new_version"],
-            "error": "Model failed to beat champion by 1%"
+            "comparison_method": comparison_method,
+            "error": reason
         }
 
-    # Step 5: Canary Deployment split splits (10% -> 25% -> 50% -> 100%)
+    logger.info(
+        f"[{model_id}] Promotion APPROVED — "
+        f"challenger {chall_score:.4f} beats champion {champ_score:.4f} "
+        f"(+{(chall_score - champ_score)*100:.2f}%) via {comparison_method} comparison."
+    )
+
+    # ---------------------------------------------------------------
+    # Step 6: Canary deployment
+    # ---------------------------------------------------------------
     canary_succeeded = deploy_canary_challenger(
         model_id=model_id,
         new_version=train_res["new_version"],
         challenger_model=challenger_model,
-        simulation=True  # fast-track weights for quick end-to-end execution
+        simulation=True
     )
-    
+
     if not canary_succeeded:
-        logger.error("Canary deployment SLA breach, model rolled back.")
+        logger.error(f"[{model_id}] Canary deployment SLA breach — rolling back.")
         return {
             "success": False,
             "error": "Canary deployment SLA breach, model rolled back."
         }
 
-    # Step 6: Governance report generation and Slack alerts
-    generate_governance_report(model_id, train_res, current_accuracy)
-    
-    logger.info("--- Retraining Flow Executed Successfully! ---")
+    # Step 7: Governance report
+    generate_governance_report(model_id, train_res, champ_score)
+
+    logger.info(f"[{model_id}] --- Retraining Flow completed successfully. ---")
     return {
         "success": True,
         "validation_passed": True,
-        "new_accuracy": train_res["new_version"],  # Returns version for API matching
-        "new_accuracy": train_res["new_accuracy"],
+        "champion_accuracy": champ_score,
+        "new_accuracy": chall_score,
         "new_version": train_res["new_version"],
+        "comparison_method": comparison_method,
         "details": train_res["metrics"]
     }
