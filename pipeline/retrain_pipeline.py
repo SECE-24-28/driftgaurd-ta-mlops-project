@@ -8,6 +8,7 @@ import os
 import time
 import json
 import datetime
+from zoneinfo import ZoneInfo
 import logging
 import numpy as np
 import pandas as pd
@@ -216,7 +217,7 @@ def retrain_model_with_tracking(
         try:
             wandb.init(
                 project=os.getenv("WANDB_PROJECT", "driftguard"),
-                name=f"{model_id}-retraining-{datetime.datetime.utcnow().strftime('%Y%m%d-%H%M')}",
+                name=f"{model_id}-retraining-{datetime.datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%Y%m%d-%H%M')}",
                 config={"max_depth": 5, "n_estimators": 100, "algorithm": "RandomForest"}
             )
         except Exception as e:

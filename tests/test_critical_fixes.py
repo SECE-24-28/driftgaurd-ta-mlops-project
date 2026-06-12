@@ -4,6 +4,7 @@ import pytest
 import joblib
 import json
 import datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 import main
@@ -165,7 +166,7 @@ def test_retraining_deadlock_recovery():
             assert model.status == "retraining"
 
             event = db.query(DBRetrainingEvent).filter(DBRetrainingEvent.id == event_id).first()
-            event.last_heartbeat = datetime.datetime.utcnow() - datetime.timedelta(seconds=350)
+            event.last_heartbeat = datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(seconds=350)
             db.commit()
         finally:
             db.close()

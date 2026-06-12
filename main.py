@@ -6,6 +6,7 @@ import os
 import json
 import time
 import datetime
+from zoneinfo import ZoneInfo
 import numpy as np
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -65,6 +66,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+def get_ist_time():
+    return datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
+
 # ----------------------------------------------------
 # DATABASE MODELS
 # ----------------------------------------------------
@@ -74,7 +78,7 @@ class DBUser(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
     api_key_hash = Column(String(64), unique=True, index=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
     is_active = Column(Boolean, default=True)
 
     projects = relationship("DBProject", back_populates="owner", cascade="all, delete-orphan")
@@ -86,7 +90,7 @@ class DBProject(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     owner_id = Column(Integer, ForeignKey("dg_users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
     owner = relationship("DBUser", back_populates="projects")
     models = relationship("DBModel", back_populates="project", cascade="all, delete-orphan")
@@ -103,7 +107,7 @@ class DBModel(Base):
     version = Column(String(50), default="1.0.0")
     features_json = Column(Text, default="[]")
     reference_data_path = Column(String(255), default="")
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
     project = relationship("DBProject", back_populates="models")
     owner = relationship("DBUser", back_populates="models")
@@ -119,7 +123,7 @@ class DBPredictionLog(Base):
     features_json = Column(Text)
     prediction_json = Column(Text)
     drift_score = Column(Float)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=get_ist_time)
 
 class DBRetrainingEvent(Base):
     __tablename__ = "dg_retraining_events"
@@ -128,9 +132,9 @@ class DBRetrainingEvent(Base):
     model_id = Column(String(100), index=True)
     status = Column(String(50)) # running, completed, failed
     triggered_by = Column(String(50)) # automatic, manual
-    start_time = Column(DateTime, default=datetime.datetime.utcnow)
-    end_time = Column(DateTime, nullable=True)
-    last_heartbeat = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
+    start_time = Column(DateTime(timezone=True), default=get_ist_time)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    last_heartbeat = Column(DateTime(timezone=True), default=get_ist_time, nullable=True)
     old_accuracy = Column(Float)
     new_accuracy = Column(Float, nullable=True)
     old_version = Column(String(50))
@@ -147,7 +151,7 @@ class DBAuditLogEntry(Base):
     drift_score = Column(Float)
     triggered_by = Column(String(50))
     details_json = Column(Text, default="{}")
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=get_ist_time)
 
 class DBModelVersion(Base):
     __tablename__ = "dg_model_versions"
@@ -157,7 +161,7 @@ class DBModelVersion(Base):
     version = Column(String(50), index=True)
     status = Column(String(50))  # champion, candidate, archived, rolled_back
     accuracy = Column(Float)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
 # ----------------------------------------------------
 # DATABASE MIGRATION AND STARTUP INIT
@@ -1000,7 +1004,7 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
     } for log in logs]
 
 def check_and_recover_all_stale_jobs_for_user(user_id: int, db: Session):
-    timeout_limit = datetime.datetime.utcnow() - datetime.timedelta(seconds=300)
+    timeout_limit = datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(seconds=300)
     stale_events = db.query(DBRetrainingEvent).join(
         DBModel,
         (DBModel.model_id == DBRetrainingEvent.model_id) & (DBModel.project_id == DBRetrainingEvent.project_id)
@@ -1014,7 +1018,7 @@ def check_and_recover_all_stale_jobs_for_user(user_id: int, db: Session):
         print(f"[Self-Healing] Recovering {len(stale_events)} stale retraining events for user {user_id}...")
         for event in stale_events:
             event.status = "failed"
-            event.end_time = datetime.datetime.utcnow()
+            event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
             event.details_json = json.dumps({"error": "Retraining job timed out/stale. Recovered by watchdog lock resolver."})
             
             db.add(DBAuditLogEntry(
@@ -1069,7 +1073,7 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
         triggered_by=req.triggered_by,
         old_accuracy=model.accuracy,
         old_version=model.version,
-        last_heartbeat=datetime.datetime.utcnow()
+        last_heartbeat=datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
     )
     db.add(event)
     db.commit()
@@ -1154,7 +1158,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
 
         if event:
             event.status = "completed"
-            event.end_time = datetime.datetime.utcnow()
+            event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
             event.new_accuracy = req.new_accuracy
             event.new_version = req.new_version
             event.details_json = json.dumps(
@@ -1214,7 +1218,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
 
         if event:
             event.status = "failed"
-            event.end_time = datetime.datetime.utcnow()
+            event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
             event.details_json = json.dumps(
                 {"error": req.error or "Challenger did not pass validation.",
                  "source": "sdk_callback"}
@@ -1309,7 +1313,7 @@ def healthcheck():
     """
     API Health check
     """
-    return {"status": "healthy", "timestamp": datetime.datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()}
 
 # ----------------------------------------------------
 # BACKGROUND RETRAINING EXECUTOR PROCESS
@@ -1400,7 +1404,7 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             # Update Retraining Event
             if event:
                 event.status = "completed"
-                event.end_time = datetime.datetime.utcnow()
+                event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
                 event.new_accuracy = new_acc
                 event.new_version = new_ver
                 event.details_json = json.dumps(pipeline_results.get("details", {}))
@@ -1443,7 +1447,7 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             
             if event:
                 event.status = "failed"
-                event.end_time = datetime.datetime.utcnow()
+                event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
                 event.details_json = json.dumps({
                     "error": pipeline_results.get("error", "Validation failed"),
                     "message": "Model challenger rejected because it did not beat production champion by 1% on primary metric."

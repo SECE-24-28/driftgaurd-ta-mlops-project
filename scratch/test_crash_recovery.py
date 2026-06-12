@@ -5,6 +5,7 @@ import sqlite3
 import httpx
 import subprocess
 import datetime
+from zoneinfo import ZoneInfo
 import shutil
 
 # Ensure project root is in python path
@@ -84,7 +85,7 @@ def run_test():
         print("[Step 4] Modifying SQLite DB to set a stale retraining heartbeat from 10 minutes ago...")
         conn = sqlite3.connect(db_file)
         c = conn.cursor()
-        stale_time = (datetime.datetime.utcnow() - datetime.timedelta(seconds=400)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        stale_time = (datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(seconds=400)).isoformat()
         c.execute("UPDATE dg_retraining_events SET last_heartbeat = ? WHERE id = ?", (stale_time, event_id))
         conn.commit()
         conn.close()

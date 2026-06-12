@@ -3,46 +3,45 @@ from sklearn.ensemble import RandomForestClassifier
 from driftguard import DriftGuard
 import time
 
-# Unique model every run
-MODEL_ID = f"registration-test-{int(time.time())}"
+MODEL_ID = f"USER23_TEST_{int(time.time())}"
 
-print(f"Using Model ID: {MODEL_ID}")
+print("MODEL:", MODEL_ID)
 
-# Training data
 X, y = make_classification(
-    n_samples=1000,
+    n_samples=2000,
     n_features=5,
     random_state=42
 )
 
-# Train model
 model = RandomForestClassifier(
     n_estimators=100,
     random_state=42
 )
+
 model.fit(X, y)
 
-# DriftGuard configuration
 dg = DriftGuard(
     model_id=MODEL_ID,
     api_url="http://localhost:8000",
-    api_key="dg-b8378366e2ec1b01b39035221c5ea5de",
-    project_id=14,
-    drift_threshold=0.37,
+    api_key="dg-901d293403b8a0625d12ecf6d5c1cd78",
+    project_id=21,
+    drift_threshold=0.30,
     auto_retrain=False
 )
 
 wrapped = dg.wrap(model)
 
-print("Sending telemetry...")
+print("Normal traffic...")
 
-# Generate telemetry
-for i, row in enumerate(X[:200]):
+for row in X[:200]:
     wrapped.predict([row])
 
-    if (i + 1) % 50 == 0:
-        print(f"Processed {i + 1} predictions")
+print("Drift traffic...")
 
-print("\nDone.")
-print(f"Model ID: {MODEL_ID}")
-print("Search this model in the dashboard.")
+X_drift = (X[:300] * 50) + 500
+
+for row in X_drift:
+    wrapped.predict([row])
+
+print("DONE")
+print("MODEL_ID =", MODEL_ID)
