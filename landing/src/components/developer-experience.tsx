@@ -141,12 +141,14 @@ async def predict(data: dict):
                   <div key={i} className="flex">
                     <span className="text-[#7d8590] w-8 shrink-0 select-none">{i + 1}</span>
                     <span dangerouslySetInnerHTML={{
-                      __html: line
-                        .replace(/import|from|as|def|async|await|return/g, '<span class="text-[#ff7b72]">$&</span>')
-                        .replace(/driftguard|dg|mlflow/g, '<span class="text-[#79c0ff]">$&</span>')
-                        .replace(/= /g, '<span class="text-[#ff7b72]">= </span>')
-                        .replace(/".*?"/g, '<span class="text-[#a5d6ff]">$&</span>')
-                        .replace(/#.*/g, '<span class="text-[#8b949e]">$&</span>')
+                      __html: line.replace(/(#.*)|(".*?")|\b(import|from|as|def|async|await|return)\b|\b(driftguard|dg|mlflow)\b|(= )/g, (match, comment, str, keyword, special, eq) => {
+                        if (comment) return `<span class="text-[#8b949e]">${comment}</span>`;
+                        if (str) return `<span class="text-[#a5d6ff]">${str}</span>`;
+                        if (keyword) return `<span class="text-[#ff7b72]">${keyword}</span>`;
+                        if (special) return `<span class="text-[#79c0ff]">${special}</span>`;
+                        if (eq) return `<span class="text-[#ff7b72]">${eq}</span>`;
+                        return match;
+                      })
                     }} />
                   </div>
                 ))}
