@@ -344,6 +344,14 @@ class RegisterModelRequest(BaseModel):
     reference_data_path: str = Field("", example="./data/baseline.parquet")
     features: List[str] = Field(default_factory=list, example=["amount", "location_score", "velocity"])
 
+class ExplicitRegisterModelRequest(BaseModel):
+    model_id: str = Field(..., example="fraud-detector-v1")
+    project_id: Optional[int] = Field(default=None, example=1)
+    drift_threshold: float = Field(0.15, example=0.37)
+    accuracy: float = Field(0.85, example=0.94)
+    version: str = Field("1.0.0", example="1.0.0")
+    features: List[str] = Field(default_factory=list, example=["feature_1", "feature_2"])
+
 class PredictTelemetryRequest(BaseModel):
     features: List[float] = Field(..., example=[1.2, 0.4, 9.8])
     prediction: List[float] = Field(..., example=[1.0])
@@ -615,6 +623,73 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
     
     return {"status": "registered", "model_id": req.model_id}
 
+@app.post("/models/register", summary="Explicitly register a model with metadata")
+def register_model_explicit(req: ExplicitRegisterModelRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Explicitly registers a new model and its metadata (threshold, version, accuracy, features).
+    """
+    proj_id = req.project_id
+    if proj_id is None:
+        # Fallback to default project for this user
+        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
+        if not project:
+            project = DBProject(name="Default Project", owner_id=current_user.id)
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+        proj_id = project.id
+    else:
+        project = db.query(DBProject).filter(DBProject.id == proj_id, DBProject.owner_id == current_user.id).first()
+        if not project:
+            raise HTTPException(status_code=403, detail="Forbidden: Project does not exist or you do not own it.")
+
+    # Reject duplicate registrations
+    existing = db.query(DBModel).filter(DBModel.model_id == req.model_id, DBModel.project_id == proj_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Model already registered.")
+
+    new_model = DBModel(
+        model_id=req.model_id,
+        project_id=proj_id,
+        owner_id=current_user.id,
+        drift_threshold=req.drift_threshold,
+        status="healthy",
+        accuracy=req.accuracy,
+        version=req.version,
+        features_json=json.dumps(req.features),
+        reference_data_path=""
+    )
+    db.add(new_model)
+
+    # Insert first version as champion in version registry
+    init_version = DBModelVersion(
+        project_id=proj_id,
+        model_id=req.model_id,
+        version=req.version,
+        status="champion",
+        accuracy=req.accuracy
+    )
+    db.add(init_version)
+    db.commit()
+
+    # Persist placeholder artifact on disk for rollback
+    try:
+        import joblib as _joblib
+        _server_root = os.path.dirname(os.path.abspath(__file__))
+        _art_dir = os.path.join(_server_root, "artifacts", str(proj_id), req.model_id)
+        os.makedirs(_art_dir, exist_ok=True)
+        _art_path = os.path.join(_art_dir, f"version_{req.version}.pkl")
+        if not os.path.exists(_art_path):
+            _joblib.dump({"model_id": req.model_id, "version": req.version, "placeholder": True}, _art_path)
+            print(f"[Register] Wrote initial artifact placeholder to {_art_path}")
+    except Exception as _art_err:
+        print(f"[Register] Warning: Could not write {req.version} artifact placeholder: {_art_err}")
+
+    # Initialize Prometheus metrics
+    accuracy_gauge.labels(model_id=req.model_id, version=req.version).set(req.accuracy)
+
+    return {"status": "registered", "model_id": req.model_id}
+
 @app.post("/predict/{model_id}", summary="Log model telemetry and execute ADWIN tracking")
 def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """
@@ -627,32 +702,7 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
     print("MODEL =", model.model_id if model else None)
     print("AUTH RESULT = Success")
     if not model:
-        # Get or create a default project for this user
-        if not project:
-            project = DBProject(name="Default Project", owner_id=current_user.id)
-            db.add(project)
-            db.commit()
-            db.refresh(project)
-        # Auto register missing model gracefully
-        model = DBModel(
-            model_id=model_id,
-            project_id=project.id,
-            owner_id=current_user.id,
-            drift_threshold=settings.DRIFT_THRESHOLD,
-            features_json=json.dumps([f"feat_{i}" for i in range(len(req.features))])
-        )
-        db.add(model)
-        
-        # Insert first version as champion in model version registry
-        init_version = DBModelVersion(
-            project_id=project.id,
-            model_id=model_id,
-            version="1.0.0",
-            status="champion",
-            accuracy=0.85
-        )
-        db.add(init_version)
-        db.commit()
+        raise HTTPException(status_code=404, detail="Model must be registered before telemetry.")
 
     # Log prediction into Database
     log_entry = DBPredictionLog(

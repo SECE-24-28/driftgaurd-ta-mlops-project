@@ -2,7 +2,11 @@
 DriftGuard Drift Detectors.
 Contains River's real-time ADWIN concept drift detector and Evidently AI's batch statistical data/target drift reporter.
 """
-import pandas as pd
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
 import numpy as np
 from typing import Dict, Any, List
 import logging
@@ -33,7 +37,7 @@ try:
     from evidently.report import Report
     from evidently.metric_preset import DataDriftPreset, TargetDriftPreset
     EVIDENTLY_AVAILABLE = True
-except ImportError:
+except Exception:
     EVIDENTLY_AVAILABLE = False
 
 logger = logging.getLogger("DriftGuard.DriftDetector")
@@ -204,7 +208,7 @@ class ADWINDriftDetector:
 
 
 
-def compute_evidently_drift(reference_df: pd.DataFrame, current_df: pd.DataFrame, target_col: str = None) -> Dict[str, Any]:
+def compute_evidently_drift(reference_df, current_df, target_col: str = None) -> Dict[str, Any]:
     """
     Compute batch data drift statistics using Evidently AI.
     
@@ -216,6 +220,9 @@ def compute_evidently_drift(reference_df: pd.DataFrame, current_df: pd.DataFrame
     Returns:
         Dictionary of drift metrics.
     """
+    if not PANDAS_AVAILABLE:
+        raise ImportError("pandas is required to run compute_evidently_drift. Install it via 'pip install pandas'.")
+
     if not EVIDENTLY_AVAILABLE:
         import os
         evidently_url = os.getenv("DRIFTGUARD_EVIDENTLY_URL")

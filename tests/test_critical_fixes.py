@@ -344,3 +344,65 @@ def test_dummy_sandbox_simulator_removed():
             assert history_resp[0]["status"] == "failed"
             error_msg = history_resp[0]["details"]["error"]
             assert ("Pipeline flow execution failed" in error_msg) or ("Mock Pipeline Failure" in error_msg)
+
+def test_explicit_model_registration_and_predict_rejection():
+    """
+    Explicit Model Registration: Verify that unregistered predict requests fail,
+    explicit registration works, duplicate registration is rejected, and telemetry works
+    after successful registration.
+    """
+    with TestClient(app) as client:
+        # Register user and project
+        reg = client.post("/users/register", json={"email": "explicit_reg@driftguard.com", "name": "Explicit Reg User"})
+        api_key = reg.json()["api_key"]
+        headers = {"X-API-Key": api_key}
+
+        proj = client.post("/projects", json={"name": "Proj"}, headers=headers).json()
+        proj_id = proj["id"]
+
+        # 1. Telemetry fails with 404 for unregistered model
+        pred_fail = client.post("/predict/unregistered-model", json={
+            "features": [1.0, 2.0],
+            "prediction": [0.0],
+            "drift_score": 0.05
+        }, headers=headers)
+        assert pred_fail.status_code == 404
+        assert "Model must be registered before telemetry." in pred_fail.json()["detail"]
+
+        # 2. Register model explicitly
+        reg_resp = client.post("/models/register", json={
+            "model_id": "registered-model",
+            "project_id": proj_id,
+            "drift_threshold": 0.37,
+            "accuracy": 0.94,
+            "version": "1.0.0",
+            "features": ["f1", "f2"]
+        }, headers=headers)
+        assert reg_resp.status_code == 200
+
+        # 3. Duplicate registration is rejected with 400
+        reg_dup = client.post("/models/register", json={
+            "model_id": "registered-model",
+            "project_id": proj_id,
+            "drift_threshold": 0.37,
+            "accuracy": 0.94,
+            "version": "1.0.0",
+            "features": ["f1", "f2"]
+        }, headers=headers)
+        assert reg_dup.status_code == 400
+        assert "Model already registered." in reg_dup.json()["detail"]
+
+        # 4. Telemetry succeeds after registration
+        pred_success = client.post("/predict/registered-model", json={
+            "features": [1.0, 2.0],
+            "prediction": [0.0],
+            "drift_score": 0.05
+        }, headers=headers)
+        assert pred_success.status_code == 200
+
+        # 5. Verify model details contain correct threshold and metadata
+        details = client.get("/models/registered-model", headers=headers).json()
+        assert details["drift_threshold"] == 0.37
+        assert details["accuracy"] == 0.94
+        assert details["version"] == "1.0.0"
+        assert details["features"] == ["f1", "f2"]

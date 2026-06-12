@@ -99,10 +99,36 @@ class DriftGuard:
             daemon=True,
             name=f"driftguard-telemetry-worker-{self.model_id}"
         )
-        self._telemetry_worker.start()
+        # Defer starting the worker thread to wrap() after explicit registration
         atexit.register(self._shutdown_telemetry_worker)
 
         logger.info(f"Initialized DriftGuard SDK for model '{model_id}' against API: {self.api_url}")
+
+    def _register_model(self, feature_names: List[str]):
+        """
+        Sends model registration request to backend API.
+        """
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        url = f"{self.api_url}/models/register"
+        payload = {
+            "model_id": self.model_id,
+            "project_id": self.project_id,
+            "drift_threshold": self.drift_threshold,
+            "version": "1.0.0",
+            "accuracy": 0.85,
+            "features": feature_names
+        }
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    logger.info(f"[{self.model_id}] Explicit model registration successful.")
+                elif resp.status_code == 400 and "already registered" in resp.text:
+                    logger.info(f"[{self.model_id}] Model is already registered on backend. Skipping registration.")
+                else:
+                    logger.warning(f"[{self.model_id}] Model registration returned status code {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.warning(f"[{self.model_id}] Failed to explicitly register model: {e}")
 
     def wrap(self, model: Any) -> "DriftGuardModelWrapper":
         """
@@ -114,6 +140,26 @@ class DriftGuard:
         Returns:
             A DriftGuardModelWrapper interceptor.
         """
+        # 1. Determine model feature count
+        num_features = 5  # default/fallback feature count
+        if hasattr(model, "n_features_in_"):
+            num_features = getattr(model, "n_features_in_")
+        elif hasattr(model, "num_features"):
+            num_features = getattr(model, "num_features")
+        
+        feature_names = [f"feature_{i}" for i in range(num_features)]
+
+        # 2. Register model
+        self._register_model(feature_names)
+
+        # 3. Start telemetry worker thread
+        if not self._telemetry_worker.is_alive():
+            try:
+                self._telemetry_worker.start()
+            except RuntimeError:
+                pass
+
+        # 4. Return wrapped model
         return DriftGuardModelWrapper(model, self)
 
     # ------------------------------------------------------------------
