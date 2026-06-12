@@ -4,7 +4,7 @@ DriftGuard package setup configuration.
 from setuptools import setup, find_packages
 
 setup(
-    name="driftguard",
+    name="driftguard-ai-sdk",
     version="1.0.0",
     description="DriftGuard — Autonomous Model Health Platform",
     author="DriftGuard Team",
