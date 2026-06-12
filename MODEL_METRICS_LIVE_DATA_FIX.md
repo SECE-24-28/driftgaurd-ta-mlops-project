@@ -50,3 +50,31 @@ The summary cards and UI components map directly to the backend database fields 
 | **Version Registry** | Version Number | `v.version` (from `/api-proxy/.../versions`) | `"N/A"` |
 | **Version Registry** | Version Accuracy | `v.accuracy` (from `/api-proxy/.../versions`) | `"N/A"` |
 | **Governance Ledger** | Event Version | `log.model_version` (from `/api/audit`) | `"N/A"` |
+
+---
+
+## 4. Tracing Source of Displayed Values for Summary Cards
+
+This section traces the exact source of each displayed value on the summary cards to show that the dashboard loads strictly live backend-driven values without any hardcoded fallbacks or mock data.
+
+### A. Champion Accuracy Card
+1. **React Component**: `StatCard` rendered inside `ModelDetails` in [pages/models/[id].js](file:///c:/Users/Yugendra/Downloads/MLopsProject/dashboard/pages/models/[id].js) (Line 172).
+2. **Variable Used**: `model?.accuracy`.
+3. **API Field Expected**: `accuracy` (returned by `GET /models/{model_id}`).
+4. **Actual Value Source**: The `model` state from `useDrift(id)` hook, which retrieves it via the Next.js API proxy route `GET /api/model?id={modelId}` mapping to the FastAPI endpoint `GET /models/{model_id}` from the SQLite database (`dg_models.accuracy`).
+5. **Hardcoded/Fallback/Default Logic**: Checked dynamically; if null or undefined, displays `"N/A"`, otherwise formats using `formatPercent(model.accuracy)` (e.g. `0.85` -> `"85.00%"`).
+
+### B. Active Version Card
+1. **React Component**: `StatCard` rendered inside `ModelDetails` in [pages/models/[id].js](file:///c:/Users/Yugendra/Downloads/MLopsProject/dashboard/pages/models/[id].js) (Line 170).
+2. **Variable Used**: `model?.version`.
+3. **API Field Expected**: `version` (returned by `GET /models/{model_id}`).
+4. **Actual Value Source**: The `model` state from `useDrift(id)` hook, which retrieves it via the Next.js API proxy route `GET /api/model?id={modelId}` mapping to the FastAPI endpoint `GET /models/{model_id}` from the SQLite database (`dg_models.version`).
+5. **Hardcoded/Fallback/Default Logic**: Checked dynamically; if null or undefined, displays `"N/A"`, otherwise appends `"v"` before the version string (e.g. `"1.0.0"` -> `"v1.0.0"`).
+
+### C. Drift SLA Threshold Card
+1. **React Component**: `StatCard` rendered inside `ModelDetails` in [pages/models/[id].js](file:///c:/Users/Yugendra/Downloads/MLopsProject/dashboard/pages/models/[id].js) (Line 173).
+2. **Variable Used**: `model?.drift_threshold`.
+3. **API Field Expected**: `drift_threshold` (returned by `GET /models/{model_id}`).
+4. **Actual Value Source**: The `model` state from `useDrift(id)` hook, which retrieves it via the Next.js API proxy route `GET /api/model?id={modelId}` mapping to the FastAPI endpoint `GET /models/{model_id}` from the SQLite database (`dg_models.drift_threshold`).
+5. **Hardcoded/Fallback/Default Logic**: Checked dynamically; if null or undefined, displays `"N/A"`, otherwise calls `model.drift_threshold.toFixed(2)` (e.g. `0.15` -> `"0.15"`).
+
