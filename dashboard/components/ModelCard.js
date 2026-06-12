@@ -11,9 +11,9 @@ export default function ModelCard({ model }) {
     router.push(`/models/${model.model_id}`);
   };
 
-  const accuracyVal = model.accuracy !== undefined ? model.accuracy : 0.85;
+  const accuracyVal = model.accuracy !== undefined && model.accuracy !== null ? model.accuracy : 0.0;
   const accuracyColorClass = getAccuracyColor(accuracyVal);
-  const formattedAccuracy = formatPercent(accuracyVal);
+  const formattedAccuracy = model.accuracy !== undefined && model.accuracy !== null ? formatPercent(model.accuracy) : "N/A";
 
   // Parse features list
   let features = [];
@@ -42,7 +42,7 @@ export default function ModelCard({ model }) {
             {model.model_id}
           </h3>
         </div>
-        <StatusBadge status={model.status || 'healthy'} />
+        <StatusBadge status={model.status !== null && model.status !== undefined ? model.status : 'N/A'} />
       </div>
 
       {/* Accuracy meter */}
@@ -63,7 +63,7 @@ export default function ModelCard({ model }) {
       <div className="space-y-2 pt-1 border-t border-[#30363d]/50">
         <div className="flex justify-between text-[11px] font-semibold text-[#7d8590]">
           <span>Drift Threshold:</span>
-          <span className="text-[#58a6ff] font-mono font-bold">{(model.drift_threshold || 0.15).toFixed(2)}</span>
+          <span className="text-[#58a6ff] font-mono font-bold">{model.drift_threshold !== null && model.drift_threshold !== undefined ? model.drift_threshold.toFixed(2) : 'N/A'}</span>
         </div>
         {features.length > 0 && (
           <div className="flex flex-wrap gap-1.5 items-center">
@@ -85,7 +85,7 @@ export default function ModelCard({ model }) {
       <div className="flex items-center justify-between pt-2 border-t border-[#30363d]/50">
         <div className="flex items-center text-[10px] text-[#7d8590] space-x-1.5">
           <Calendar className="w-3.5 h-3.5" />
-          <span>v{model.version || '1.0.0'}</span>
+          <span>{model.version !== null && model.version !== undefined ? `v${model.version}` : 'N/A'}</span>
         </div>
         <button
           onClick={handleDetails}

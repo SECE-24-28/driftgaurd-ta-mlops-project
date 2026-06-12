@@ -6,6 +6,7 @@ Contains model lineage schemas, drift history, retraining metrics, and EU AI Act
 import os
 import json
 import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, List
 
 try:
@@ -43,7 +44,7 @@ def generate_pdf_report(
     if not lineage:
         # Mock default lineage fallback
         lineage = {
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
             "model_id": model_id,
             "version": version,
             "lineage": {
@@ -92,13 +93,13 @@ def generate_pdf_report(
     # Seed default events if DB was empty/unconnected
     if not drift_events:
         drift_events = [
-            [(datetime.datetime.utcnow() - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M"), version, "0.1982", "automatic"],
-            [(datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d %H:%M"), "1.0.3", "0.1743", "automatic"]
+            [(datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M"), version, "0.1982", "automatic"],
+            [(datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(days=1)).strftime("%Y-%m-%d %H:%M"), "1.0.3", "0.1743", "automatic"]
         ]
     if not retrain_events:
         retrain_events = [
-            [(datetime.datetime.utcnow() - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M"), "COMPLETED", "0.8912", "0.9123", "1.0.4", "1.0.5"],
-            [(datetime.datetime.utcnow() - datetime.timedelta(days=3)).strftime("%Y-%m-%d %H:%M"), "COMPLETED", "0.8752", "0.8912", "1.0.3", "1.0.4"]
+            [(datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M"), "COMPLETED", "0.8912", "0.9123", "1.0.4", "1.0.5"],
+            [(datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(days=3)).strftime("%Y-%m-%d %H:%M"), "COMPLETED", "0.8752", "0.8912", "1.0.3", "1.0.4"]
         ]
 
     if not REPORTLAB_AVAILABLE:
@@ -148,7 +149,7 @@ def generate_pdf_report(
     
     # Title Blocks
     story.append(Paragraph("🛡️ DriftGuard Governance & Compliance Audit", title_style))
-    story.append(Paragraph(f"Generated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC | Model: <b>{model_id}</b> | Target Version: <b>{version}</b>", subtitle_style))
+    story.append(Paragraph(f"Generated: {datetime.datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S')} IST | Model: <b>{model_id}</b> | Target Version: <b>{version}</b>", subtitle_style))
     story.append(Spacer(1, 10))
     
     # ----------------------------------------------------
@@ -255,7 +256,7 @@ def _generate_fallback_pdf(model_id: str, version: str, output_path: str, lineag
         f"DriftGuard Governance & Compliance Audit",
         f"Model: {model_id}",
         f"Version: {version}",
-        f"Generated: {datetime.datetime.utcnow().isoformat()}Z",
+        f"Generated: {datetime.datetime.now(ZoneInfo('Asia/Kolkata')).isoformat()}",
         "",
         "Lineage Summary:",
         json.dumps(lineage, sort_keys=True),

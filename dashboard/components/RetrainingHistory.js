@@ -32,9 +32,17 @@ export default function RetrainingHistory({ events }) {
   };
 
   const renderAccuracyChange = (event) => {
-    if (event.status !== 'completed' || event.new_accuracy === null || event.new_accuracy === undefined) return null;
-    const oldAcc = event.old_accuracy || 0.85;
-    const newAcc = event.new_accuracy || 0.86;
+    if (
+      event.status !== 'completed' ||
+      event.old_accuracy === null ||
+      event.old_accuracy === undefined ||
+      event.new_accuracy === null ||
+      event.new_accuracy === undefined
+    ) {
+      return null;
+    }
+    const oldAcc = event.old_accuracy;
+    const newAcc = event.new_accuracy;
     const diff = newAcc - oldAcc;
     const percentChange = (diff * 100).toFixed(1);
     const isImproved = diff > 0;
@@ -42,9 +50,9 @@ export default function RetrainingHistory({ events }) {
 
     return (
       <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-[#e6edf3] bg-[#0d1117] px-2 py-1 rounded border border-[#30363d] mt-2 w-fit">
-        <span>v{event.old_version || '1.0.0'}</span>
+        <span>{event.old_version !== null && event.old_version !== undefined ? `v${event.old_version}` : 'N/A'}</span>
         <ArrowRight className="w-3 h-3 text-[#7d8590]" />
-        <span>v{event.new_version || '1.0.1'}</span>
+        <span>{event.new_version !== null && event.new_version !== undefined ? `v${event.new_version}` : 'N/A'}</span>
         <span className="text-[#7d8590]">|</span>
         <span>Acc: {formatPercent(oldAcc)}</span>
         <ArrowRight className="w-3 h-3 text-[#7d8590]" />

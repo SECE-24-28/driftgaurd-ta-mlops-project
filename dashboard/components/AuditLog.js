@@ -108,7 +108,7 @@ export default function AuditLog({ logs }) {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-[#e6edf3] font-semibold">
-                    v{log.model_version || '1.0.0'}
+                    {log.model_version !== null && log.model_version !== undefined ? `v${log.model_version}` : 'N/A'}
                   </td>
                   <td className="px-4 py-3 text-[#e6edf3] font-mono font-medium">
                     {formatDriftScore(log.drift_score)}

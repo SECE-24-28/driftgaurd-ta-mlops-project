@@ -7,6 +7,7 @@ import os
 import json
 import hashlib
 import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, Optional
 import threading
 
@@ -71,7 +72,7 @@ def write_audit_entry(
 
         # 2. Build audit JSON structure
         entry = {
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
             "event_type": event_type,
             "model_id": model_id,
             "model_version": model_version,

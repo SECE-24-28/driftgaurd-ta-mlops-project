@@ -101,9 +101,14 @@ class RetrainerCallbackRunner:
                 try:
                     import joblib
                     import os
-                    dir_path = f"artifacts/{self.tracker.project_id}/{self.model_id}"
+                    from driftguard.config import settings as _settings
+                    dir_path = os.path.join(
+                        _settings.ARTIFACT_ROOT,
+                        str(self.tracker.project_id),
+                        self.model_id
+                    )
                     os.makedirs(dir_path, exist_ok=True)
-                    file_path = f"{dir_path}/version_{new_version}.pkl"
+                    file_path = os.path.join(dir_path, f"version_{new_version}.pkl")
                     joblib.dump(challenger_model, file_path)
                     print(f"PERSISTED CHALLENGER MODEL TO {file_path}")
                     logger.info(f"[{self.model_id}] Persisted challenger model before promotion to {file_path}")

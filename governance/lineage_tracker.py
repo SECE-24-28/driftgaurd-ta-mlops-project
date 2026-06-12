@@ -6,6 +6,7 @@ import os
 import json
 import subprocess
 import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, Optional
 
 from driftguard.config import settings
@@ -43,7 +44,7 @@ def track_model_lineage(
     git_sha = code_commit or get_git_commit()
     
     record = {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "model_id": model_id,
         "version": version,
         "lineage": {

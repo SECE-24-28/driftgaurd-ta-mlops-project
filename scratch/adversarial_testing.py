@@ -191,10 +191,12 @@ def main():
 
         # Simulating stale lock state (10 mins ago) in local sqlite DB requires using the sqlite client.
         import sqlite3
+        import datetime
+        from zoneinfo import ZoneInfo
         conn = sqlite3.connect("driftguard_metadata.db")
         c = conn.cursor()
         # Set heartbeat 10 minutes in the past
-        stale_time = (datetime.datetime.utcnow() - datetime.timedelta(seconds=350)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        stale_time = (datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(seconds=350)).isoformat()
         c.execute("UPDATE dg_retraining_events SET last_heartbeat = ? WHERE id = ?", (stale_time, event_id))
         conn.commit()
         conn.close()

@@ -6,6 +6,7 @@ import os
 import json
 import time
 import datetime
+from zoneinfo import ZoneInfo
 import numpy as np
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -65,6 +66,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+def get_ist_time():
+    return datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
+
 # ----------------------------------------------------
 # DATABASE MODELS
 # ----------------------------------------------------
@@ -74,7 +78,7 @@ class DBUser(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
     api_key_hash = Column(String(64), unique=True, index=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
     is_active = Column(Boolean, default=True)
 
     projects = relationship("DBProject", back_populates="owner", cascade="all, delete-orphan")
@@ -86,7 +90,7 @@ class DBProject(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     owner_id = Column(Integer, ForeignKey("dg_users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
     owner = relationship("DBUser", back_populates="projects")
     models = relationship("DBModel", back_populates="project", cascade="all, delete-orphan")
@@ -103,7 +107,7 @@ class DBModel(Base):
     version = Column(String(50), default="1.0.0")
     features_json = Column(Text, default="[]")
     reference_data_path = Column(String(255), default="")
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
     project = relationship("DBProject", back_populates="models")
     owner = relationship("DBUser", back_populates="models")
@@ -119,7 +123,7 @@ class DBPredictionLog(Base):
     features_json = Column(Text)
     prediction_json = Column(Text)
     drift_score = Column(Float)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=get_ist_time)
 
 class DBRetrainingEvent(Base):
     __tablename__ = "dg_retraining_events"
@@ -128,9 +132,9 @@ class DBRetrainingEvent(Base):
     model_id = Column(String(100), index=True)
     status = Column(String(50)) # running, completed, failed
     triggered_by = Column(String(50)) # automatic, manual
-    start_time = Column(DateTime, default=datetime.datetime.utcnow)
-    end_time = Column(DateTime, nullable=True)
-    last_heartbeat = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
+    start_time = Column(DateTime(timezone=True), default=get_ist_time)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    last_heartbeat = Column(DateTime(timezone=True), default=get_ist_time, nullable=True)
     old_accuracy = Column(Float)
     new_accuracy = Column(Float, nullable=True)
     old_version = Column(String(50))
@@ -147,7 +151,7 @@ class DBAuditLogEntry(Base):
     drift_score = Column(Float)
     triggered_by = Column(String(50))
     details_json = Column(Text, default="{}")
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=get_ist_time)
 
 class DBModelVersion(Base):
     __tablename__ = "dg_model_versions"
@@ -157,7 +161,7 @@ class DBModelVersion(Base):
     version = Column(String(50), index=True)
     status = Column(String(50))  # champion, candidate, archived, rolled_back
     accuracy = Column(Float)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=get_ist_time)
 
 # ----------------------------------------------------
 # DATABASE MIGRATION AND STARTUP INIT
@@ -344,6 +348,14 @@ class RegisterModelRequest(BaseModel):
     reference_data_path: str = Field("", example="./data/baseline.parquet")
     features: List[str] = Field(default_factory=list, example=["amount", "location_score", "velocity"])
 
+class ExplicitRegisterModelRequest(BaseModel):
+    model_id: str = Field(..., example="fraud-detector-v1")
+    project_id: Optional[int] = Field(default=None, example=1)
+    drift_threshold: float = Field(0.15, example=0.37)
+    accuracy: float = Field(0.85, example=0.94)
+    version: str = Field("1.0.0", example="1.0.0")
+    features: List[str] = Field(default_factory=list, example=["feature_1", "feature_2"])
+
 class PredictTelemetryRequest(BaseModel):
     features: List[float] = Field(..., example=[1.2, 0.4, 9.8])
     prediction: List[float] = Field(..., example=[1.0])
@@ -393,6 +405,11 @@ def get_db():
 
 @app.middleware("http")
 async def api_key_auth_middleware(request: Request, call_next):
+    # CORS preflight requests never carry custom headers — pass them through
+    # to CORSMiddleware which will add the appropriate CORS response headers.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     # Exclude open endpoints
     path = request.url.path
     exempt_prefixes = ["/health", "/api/health", "/docs", "/openapi.json", "/users/register", "/metrics"]
@@ -588,9 +605,93 @@ def register_model(req: RegisterModelRequest, current_user: DBUser = Depends(get
     db.add(init_version)
     db.commit()
     
+    # Persist a placeholder v1.0.0 artifact on disk so rollback to the initial
+    # version is always possible — even before the SDK sends a real champion model.
+    # The server writes this because it owns the artifact directory and always
+    # runs from a known CWD (the project root).
+    try:
+        import joblib as _joblib
+        _server_root = os.path.dirname(os.path.abspath(__file__))
+        _art_dir = os.path.join(_server_root, "artifacts", str(proj_id), req.model_id)
+        os.makedirs(_art_dir, exist_ok=True)
+        _art_path = os.path.join(_art_dir, "version_1.0.0.pkl")
+        if not os.path.exists(_art_path):
+            # Write a lightweight sentinel so rollback endpoint can validate the file
+            _joblib.dump({"model_id": req.model_id, "version": "1.0.0", "placeholder": True}, _art_path)
+            print(f"[Register] Wrote initial artifact placeholder to {_art_path}")
+    except Exception as _art_err:
+        print(f"[Register] Warning: Could not write v1.0.0 artifact placeholder: {_art_err}")
+    
     # Initialize metrics
     accuracy_gauge.labels(model_id=req.model_id, version="1.0.0").set(0.85)
     
+    return {"status": "registered", "model_id": req.model_id}
+
+@app.post("/models/register", summary="Explicitly register a model with metadata")
+def register_model_explicit(req: ExplicitRegisterModelRequest, current_user: DBUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Explicitly registers a new model and its metadata (threshold, version, accuracy, features).
+    """
+    proj_id = req.project_id
+    if proj_id is None:
+        # Fallback to default project for this user
+        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
+        if not project:
+            project = DBProject(name="Default Project", owner_id=current_user.id)
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+        proj_id = project.id
+    else:
+        project = db.query(DBProject).filter(DBProject.id == proj_id, DBProject.owner_id == current_user.id).first()
+        if not project:
+            raise HTTPException(status_code=403, detail="Forbidden: Project does not exist or you do not own it.")
+
+    # Reject duplicate registrations
+    existing = db.query(DBModel).filter(DBModel.model_id == req.model_id, DBModel.project_id == proj_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Model already registered.")
+
+    new_model = DBModel(
+        model_id=req.model_id,
+        project_id=proj_id,
+        owner_id=current_user.id,
+        drift_threshold=req.drift_threshold,
+        status="healthy",
+        accuracy=req.accuracy,
+        version=req.version,
+        features_json=json.dumps(req.features),
+        reference_data_path=""
+    )
+    db.add(new_model)
+
+    # Insert first version as champion in version registry
+    init_version = DBModelVersion(
+        project_id=proj_id,
+        model_id=req.model_id,
+        version=req.version,
+        status="champion",
+        accuracy=req.accuracy
+    )
+    db.add(init_version)
+    db.commit()
+
+    # Persist placeholder artifact on disk for rollback
+    try:
+        import joblib as _joblib
+        _server_root = os.path.dirname(os.path.abspath(__file__))
+        _art_dir = os.path.join(_server_root, "artifacts", str(proj_id), req.model_id)
+        os.makedirs(_art_dir, exist_ok=True)
+        _art_path = os.path.join(_art_dir, f"version_{req.version}.pkl")
+        if not os.path.exists(_art_path):
+            _joblib.dump({"model_id": req.model_id, "version": req.version, "placeholder": True}, _art_path)
+            print(f"[Register] Wrote initial artifact placeholder to {_art_path}")
+    except Exception as _art_err:
+        print(f"[Register] Warning: Could not write {req.version} artifact placeholder: {_art_err}")
+
+    # Initialize Prometheus metrics
+    accuracy_gauge.labels(model_id=req.model_id, version=req.version).set(req.accuracy)
+
     return {"status": "registered", "model_id": req.model_id}
 
 @app.post("/predict/{model_id}", summary="Log model telemetry and execute ADWIN tracking")
@@ -605,32 +706,7 @@ def log_prediction(model_id: str, req: PredictTelemetryRequest, current_user: DB
     print("MODEL =", model.model_id if model else None)
     print("AUTH RESULT = Success")
     if not model:
-        # Get or create a default project for this user
-        if not project:
-            project = DBProject(name="Default Project", owner_id=current_user.id)
-            db.add(project)
-            db.commit()
-            db.refresh(project)
-        # Auto register missing model gracefully
-        model = DBModel(
-            model_id=model_id,
-            project_id=project.id,
-            owner_id=current_user.id,
-            drift_threshold=settings.DRIFT_THRESHOLD,
-            features_json=json.dumps([f"feat_{i}" for i in range(len(req.features))])
-        )
-        db.add(model)
-        
-        # Insert first version as champion in model version registry
-        init_version = DBModelVersion(
-            project_id=project.id,
-            model_id=model_id,
-            version="1.0.0",
-            status="champion",
-            accuracy=0.85
-        )
-        db.add(init_version)
-        db.commit()
+        raise HTTPException(status_code=404, detail="Model must be registered before telemetry.")
 
     # Log prediction into Database
     log_entry = DBPredictionLog(
@@ -709,18 +785,7 @@ def get_drift_metrics(model_id: str, current_user: DBUser = Depends(get_current_
              .all()
              
     if not logs:
-        # Mock empty data dynamically
-        now = datetime.datetime.utcnow()
-        mock_data = []
-        for i in range(24):
-            t = now - datetime.timedelta(hours=(24-i))
-            mock_data.append({
-                "timestamp": t.isoformat(),
-                "drift_score": 0.02 + (i * 0.003),
-                "features": [0.0] * 5,
-                "prediction": [0.0]
-            })
-        return mock_data
+        return []
 
     # Return prediction metrics chronological
     return [{
@@ -737,29 +802,6 @@ def list_models(current_user: DBUser = Depends(get_current_user), db: Session = 
     """
     check_and_recover_all_stale_jobs_for_user(current_user.id, db)
     models = db.query(DBModel).filter(DBModel.owner_id == current_user.id).all()
-    # If empty, seed a mock model for the dashboard to showcase beautiful styles out-of-the-box
-    if not models:
-        project = db.query(DBProject).filter(DBProject.owner_id == current_user.id).first()
-        if not project:
-            project = DBProject(name="Default Project", owner_id=current_user.id)
-            db.add(project)
-            db.commit()
-            db.refresh(project)
-            
-        seed_model = DBModel(
-            model_id="fraud-detector-v1",
-            project_id=project.id,
-            owner_id=current_user.id,
-            drift_threshold=0.15,
-            status="healthy",
-            accuracy=0.912,
-            version="1.0.4",
-            features_json=json.dumps(["amount", "location_score", "velocity_h", "login_attempts", "device_trust"])
-        )
-        db.add(seed_model)
-        db.commit()
-        models = [seed_model]
-        
     return [{
         "model_id": m.model_id,
         "drift_threshold": m.drift_threshold,
@@ -829,7 +871,9 @@ def rollback_model_version(model_id: str, req: RollbackRequest, current_user: DB
         raise HTTPException(status_code=400, detail=f"Target version {req.target_version} is already the current champion.")
 
     # Load previous model artifact and restore (Verify artifact exists and loads before DB changes)
-    artifact_path = f"artifacts/{model.project_id}/{model_id}/version_{target_ver.version}.pkl"
+    # Use __file__ to anchor the artifacts/ directory to the project root regardless of CWD.
+    _server_root = os.path.dirname(os.path.abspath(__file__))
+    artifact_path = os.path.join(_server_root, "artifacts", str(model.project_id), model_id, f"version_{target_ver.version}.pkl")
     if not os.path.exists(artifact_path):
         raise HTTPException(
             status_code=404,
@@ -918,20 +962,7 @@ def get_retraining_history(model_id: str, current_user: DBUser = Depends(get_cur
                .order_by(DBRetrainingEvent.start_time.desc())\
                .all()
     if not events:
-        # Return elegant default seed event
-        return [{
-            "id": 1,
-            "model_id": model_id,
-            "status": "completed",
-            "triggered_by": "manual",
-            "start_time": (datetime.datetime.utcnow() - datetime.timedelta(days=2)).isoformat(),
-            "end_time": (datetime.datetime.utcnow() - datetime.timedelta(days=2, minutes=4)).isoformat(),
-            "old_accuracy": 0.895,
-            "new_accuracy": 0.912,
-            "old_version": "1.0.3",
-            "new_version": "1.0.4",
-            "details": {"message": "Initial calibration run succeeded."}
-        }]
+        return []
 
     return [{
         "id": e.id,
@@ -960,16 +991,7 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
              .all()
              
     if not logs:
-        # Seed mock audit data
-        return [{
-            "timestamp": (datetime.datetime.utcnow() - datetime.timedelta(days=2)).isoformat(),
-            "event_type": "model_promoted",
-            "model_id": model_id,
-            "model_version": "1.0.4",
-            "drift_score": 0.02,
-            "triggered_by": "manual",
-            "details": {"message": "Version 1.0.4 promoted to production champion after successful validation."}
-        }]
+        return []
 
     return [{
         "timestamp": log.timestamp.isoformat(),
@@ -982,7 +1004,7 @@ def get_audit_logs(model_id: str, current_user: DBUser = Depends(get_current_use
     } for log in logs]
 
 def check_and_recover_all_stale_jobs_for_user(user_id: int, db: Session):
-    timeout_limit = datetime.datetime.utcnow() - datetime.timedelta(seconds=300)
+    timeout_limit = datetime.datetime.now(ZoneInfo("Asia/Kolkata")) - datetime.timedelta(seconds=300)
     stale_events = db.query(DBRetrainingEvent).join(
         DBModel,
         (DBModel.model_id == DBRetrainingEvent.model_id) & (DBModel.project_id == DBRetrainingEvent.project_id)
@@ -996,7 +1018,7 @@ def check_and_recover_all_stale_jobs_for_user(user_id: int, db: Session):
         print(f"[Self-Healing] Recovering {len(stale_events)} stale retraining events for user {user_id}...")
         for event in stale_events:
             event.status = "failed"
-            event.end_time = datetime.datetime.utcnow()
+            event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
             event.details_json = json.dumps({"error": "Retraining job timed out/stale. Recovered by watchdog lock resolver."})
             
             db.add(DBAuditLogEntry(
@@ -1051,7 +1073,7 @@ def trigger_retraining(model_id: str, req: RetrainTriggerRequest, background_tas
         triggered_by=req.triggered_by,
         old_accuracy=model.accuracy,
         old_version=model.version,
-        last_heartbeat=datetime.datetime.utcnow()
+        last_heartbeat=datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
     )
     db.add(event)
     db.commit()
@@ -1136,7 +1158,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
 
         if event:
             event.status = "completed"
-            event.end_time = datetime.datetime.utcnow()
+            event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
             event.new_accuracy = req.new_accuracy
             event.new_version = req.new_version
             event.details_json = json.dumps(
@@ -1196,7 +1218,7 @@ def complete_retraining(model_id: str, req: RetrainCompleteRequest, current_user
 
         if event:
             event.status = "failed"
-            event.end_time = datetime.datetime.utcnow()
+            event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
             event.details_json = json.dumps(
                 {"error": req.error or "Challenger did not pass validation.",
                  "source": "sdk_callback"}
@@ -1291,7 +1313,7 @@ def healthcheck():
     """
     API Health check
     """
-    return {"status": "healthy", "timestamp": datetime.datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()}
 
 # ----------------------------------------------------
 # BACKGROUND RETRAINING EXECUTOR PROCESS
@@ -1382,7 +1404,7 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             # Update Retraining Event
             if event:
                 event.status = "completed"
-                event.end_time = datetime.datetime.utcnow()
+                event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
                 event.new_accuracy = new_acc
                 event.new_version = new_ver
                 event.details_json = json.dumps(pipeline_results.get("details", {}))
@@ -1425,7 +1447,7 @@ def run_retraining_process(model_id: str, event_id: int, drift_score: float, tri
             
             if event:
                 event.status = "failed"
-                event.end_time = datetime.datetime.utcnow()
+                event.end_time = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
                 event.details_json = json.dumps({
                     "error": pipeline_results.get("error", "Validation failed"),
                     "message": "Model challenger rejected because it did not beat production champion by 1% on primary metric."

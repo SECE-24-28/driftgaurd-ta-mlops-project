@@ -25,7 +25,18 @@ class SDKConfig:
     RETRAIN_WINDOW_DAYS = int(os.getenv("DRIFTGUARD_RETRAIN_WINDOW_DAYS", "30"))
     CANARY_INITIAL_WEIGHT = float(os.getenv("DRIFTGUARD_CANARY_INITIAL_WEIGHT", "0.10"))
     CANARY_STEP_MINUTES = int(os.getenv("DRIFTGUARD_CANARY_STEP_MINUTES", "30"))
-    
+
+    # Artifact Storage Root — absolute path shared by the SDK and the API server.
+    # Both the SDK process (any CWD) and the Uvicorn server must resolve artifacts
+    # to the same absolute directory.  Defaults to <project_root>/artifacts/ which
+    # is the parent directory of this package (driftguard/).
+    # Override with DRIFTGUARD_ARTIFACT_ROOT env var (must be an absolute path).
+    _default_artifact_root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # project root
+        "artifacts"
+    )
+    ARTIFACT_ROOT = os.getenv("DRIFTGUARD_ARTIFACT_ROOT", _default_artifact_root)
+
     # MLflow settings
     MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "driftguard")
