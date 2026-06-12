@@ -13,7 +13,7 @@ export default function ModelCard({ model }) {
 
   const accuracyVal = model.accuracy !== undefined && model.accuracy !== null ? model.accuracy : 0.0;
   const accuracyColorClass = getAccuracyColor(accuracyVal);
-  const formattedAccuracy = model.accuracy !== undefined && model.accuracy !== null ? formatPercent(model.accuracy) : "—";
+  const formattedAccuracy = model.accuracy !== undefined && model.accuracy !== null ? formatPercent(model.accuracy) : "N/A";
 
   // Parse features list
   let features = [];
@@ -42,7 +42,7 @@ export default function ModelCard({ model }) {
             {model.model_id}
           </h3>
         </div>
-        <StatusBadge status={model.status || 'healthy'} />
+        <StatusBadge status={model.status !== null && model.status !== undefined ? model.status : 'N/A'} />
       </div>
 
       {/* Accuracy meter */}
