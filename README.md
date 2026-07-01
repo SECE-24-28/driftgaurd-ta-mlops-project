@@ -1,10 +1,10 @@
-# 🛡️ DriftGuard — Autonomous Model Health Platform
+#  DriftGuard — Autonomous Model Health Platform
 
 DriftGuard is a production-grade, self-healing MLOps platform designed to detect data drift, concept drift, and model degradation in real time, automatically trigger validating retraining pipelines, and progressively deploy champion models via progressive canary routers.
 
 ---
 
-## 🏗️ Architecture Design
+##  Architecture Design
 
 ```
                      +---------------------------------------+
@@ -57,7 +57,7 @@ DriftGuard is a production-grade, self-healing MLOps platform designed to detect
 
 ---
 
-## ⚡ Prerequisites
+##  Prerequisites
 
 To run and configure DriftGuard, ensure the following are installed:
 - **Python 3.11** only (Ray and BentoML have incomplete 3.12 support).
@@ -67,7 +67,7 @@ To run and configure DriftGuard, ensure the following are installed:
 
 ---
 
-## 🚀 Quick Start in 5 Lines
+##  Quick Start in 5 Lines
 
 Wrap any scikit-learn, PyTorch, or HuggingFace model with DriftGuard SDK to track predictions, compute concept drift, and initiate auto-healing:
 
@@ -86,7 +86,7 @@ prediction = model.predict(features)
 
 ---
 
-## 📦 Installation & Setup
+## Installation & Setup
 
 ### 1. Local Package Installation
 Clone the repository and install the DriftGuard package locally:
@@ -109,7 +109,7 @@ docker-compose -f infra/docker-compose.yml up --build -d
 
 ---
 
-## ⚙️ SDK Configuration Parameters
+##  SDK Configuration Parameters
 
 The `DriftGuard` class accepts the following parameters:
 
@@ -122,7 +122,7 @@ The `DriftGuard` class accepts the following parameters:
 
 ---
 
-## 📡 API Gateway Documentation
+##  API Gateway Documentation
 
 DriftGuard Core API runs on port `8000`. Key REST endpoints include:
 
@@ -161,7 +161,7 @@ Exposes system health gauges for Prometheus scrapers in OpenMetrics format.
 
 ---
 
-## 🖥️ Dashboards & Observability Portals
+##  Dashboards & Observability Portals
 
 Once the docker services are online:
 1. **NextJS UI Dashboard:** Navigate to [http://localhost:3000](http://localhost:3000) to review models list, drift histories, vertical retraining timelines, and searchable audit logs.
@@ -171,7 +171,7 @@ Once the docker services are online:
 
 ---
 
-## 🧪 Running Unit Tests
+##  Running Unit Tests
 
 Run all unit tests verifying ADWIN concept detectors, Great Expectations validators, canary routing splits, emergency rollbacks, and cryptographic audit log chains:
 ```bash
@@ -180,7 +180,7 @@ pytest tests/ -v
 
 ---
 
-## ☁️ Deploying to AWS Cloud (Terraform)
+##  Deploying to AWS Cloud (Terraform)
 
 Deploy DriftGuard core infrastructure to Amazon Web Services:
 ```bash
