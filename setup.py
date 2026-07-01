@@ -1,12 +1,20 @@
 """
 DriftGuard package setup configuration.
 """
+
+from pathlib import Path
 from setuptools import setup, find_packages
+
+# Read README.md for PyPI long description
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="driftguard-ai-sdk",
-    version="1.0.0",
-    description="DriftGuard — Autonomous Model Health Platform",
+    version="1.0.2",  # Increment version before uploading
+    description="Production-grade AI model monitoring, drift detection, and autonomous retraining platform",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     author="DriftGuard Team",
     packages=find_packages(
         include=[
@@ -15,7 +23,6 @@ setup(
         ]
     ),
     install_requires=[
-        # SDK client — what sdk/tracker.py, drift_detector.py, config.py actually import
         "numpy>=1.24",
         "httpx>=0.24",
         "python-dotenv>=1.0",
@@ -24,7 +31,6 @@ setup(
     ],
     extras_require={
         "server": [
-            # API server deps — only needed when running main.py
             "fastapi==0.111.0",
             "uvicorn==0.28.1",
             "pydantic==1.10.13",
@@ -52,7 +58,28 @@ setup(
         "test": [
             "pytest==8.2.0",
             "pytest-asyncio==0.23.6",
-        ]
+        ],
     },
     python_requires=">=3.9",
+    keywords=[
+        "mlops",
+        "machine-learning",
+        "drift-detection",
+        "model-monitoring",
+        "ai",
+        "observability",
+        "retraining",
+    ],
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Software Development :: Libraries",
+    ],
 )
